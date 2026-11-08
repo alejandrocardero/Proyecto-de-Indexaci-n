@@ -1,0 +1,78 @@
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-custom {
+  animation: pulse 2s var(--ease-in-out) infinite;
+}
+
+/* Solo entrada principal de página, no en cada sección */
+.page-enter {
+  animation: var(--motion-enter) var(--ease-out) both;
+}
+
+/* Entrada de hero: fade + slide, una sola vez */
+.animate-in {
+  animation: var(--motion-enter) var(--ease-out) both;
+}
+
+/* Stagger para grupos: 30-80ms entre elementos */
+.stagger-1 { animation-delay: 30ms; }
+.stagger-2 { animation-delay: 80ms; }
+.stagger-3 { animation-delay: 130ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in,
+  .animate-pulse-custom,
+  .page-enter,
+  .stagger-1,
+  .stagger-2,
+  .stagger-3 {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.page-enter {
+  animation: var(--motion-enter) ease-out both;
+}
+
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.fade-out {
+  animation: var(--motion-exit) ease-in both;
+}
+
+/* Reducir movimiento preferido: page-enter y fade-out */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter,
+  .fade-out {
+    animation-duration: 0.01ms;
+  }
+}
