@@ -39,3 +39,15 @@ pnpm-debug.log*
 
 # Misc
 !*.md
+
+# OpenCode / DeepWork session files
+.slim/
+.opencode/
+
+# Next.js generated
+next-env.d.ts
+
+# OS
+.DS_Store
+Thumbs.db
+
