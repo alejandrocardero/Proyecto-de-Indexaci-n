@@ -40,6 +40,13 @@ pnpm-debug.log*
 # Misc
 !*.md
 
+# Agent reports (not source code)
+GATE3_REPORT.md
+HANDOFF.md
+QUALITY_A11Y_REPORT.md
+SUMMARY_REPORT.md
+VALIDACION_FINAL.md
+
 # OpenCode / DeepWork session files
 .slim/
 .opencode/
