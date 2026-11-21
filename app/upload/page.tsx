@@ -42,7 +42,21 @@ const AI_MODELS = [
 ] as const;
 
 export default function UploadPage() {
-  const [selectedAiModel, setSelectedAiModel] = useState<string>(AI_MODELS[0].id);
+  const savedConfig = typeof window !== "undefined"
+    ? (() => {
+        try {
+          return JSON.parse(localStorage.getItem("mipymes_ai_config") || "{}");
+        } catch {
+          return {};
+        }
+      })()
+    : {};
+  const [selectedAiModel, setSelectedAiModel] = useState<string>(
+    savedConfig.chatModel || AI_MODELS[0].id
+  );
+  const [embeddingModel, setEmbeddingModel] = useState<string>(
+    savedConfig.embeddingModel || "sentence-transformers/all-MiniLM-L6-v2"
+  );
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -261,7 +275,8 @@ export default function UploadPage() {
           docType: fileDocType,
           reference: fileReference.trim() || undefined,
           folio: fileFolio.trim() || undefined,
-        }
+        },
+        embeddingModel
       );
 
       updateProgress(100);

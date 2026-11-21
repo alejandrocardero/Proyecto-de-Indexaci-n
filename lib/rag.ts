@@ -146,7 +146,8 @@ export const rag = {
     size: number,
     rawText: string,
     aiModel: string,
-    metadata: DocumentChunkMetadata = {}
+    metadata: DocumentChunkMetadata = {},
+    embeddingModel?: string
   ): Promise<void> {
     const { cleanText } = await import("./text-cleaner");
     const cleaned = cleanText(rawText);
@@ -159,6 +160,7 @@ export const rag = {
 
     const chunks: DocumentChunk[] = [];
     const EMB_MODEL =
+      embeddingModel ||
       process.env.NEXT_PUBLIC_HF_EMBEDDING_MODEL ||
       "sentence-transformers/all-MiniLM-L6-v2";
 

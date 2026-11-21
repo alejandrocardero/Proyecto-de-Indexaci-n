@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Sun, Moon } from "lucide-react";
+import { Menu, X, Sun, Moon, Settings } from "lucide-react";
 import { useAuth } from "@/lib/auth-local";
 import { Button } from "@/components/ui/button";
 import { LanguageSelector } from "@/components/layout/LanguageSelector";
@@ -89,6 +89,16 @@ export function Navbar() {
               {/* Desktop language selector */}
               <div className="hidden md:flex">
                 <LanguageSelector currentLang={currentLang} onLangChange={setLang} />
+              </div>
+
+              {/* Desktop settings button */}
+              <div className="hidden md:flex">
+                <Link href="/configuraciones">
+                  <Button variant="outline" size="sm" className="text-xs">
+                    <Settings className="w-3 h-3 mr-1.5" />
+                    Configurar IA
+                  </Button>
+                </Link>
               </div>
             </div>
 
