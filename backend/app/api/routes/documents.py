@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.core.dependencies import get_org_membership, require_roles
 from app.db.supabase import get_supabase
 from app.schemas import ReviewRequest
+from app.services.text_extraction import extract_text
 
 router = APIRouter()
 ALLOWED_TYPES = {
@@ -76,6 +77,37 @@ async def upload_document(
     _audit(db, org_id, user.id, "document.uploaded", doc_id,
            {"filename": file.filename, "size_bytes": len(content)})
     return inserted.data[0]
+
+
+@router.post("/extract-text")
+async def extract_document_text(
+    file: UploadFile = File(...),
+    membership=Depends(get_org_membership),
+):
+    """Extrae el texto de un documento subido sin guardarlo.
+
+    Útil para previsualizar el contenido antes de indexar.
+    """
+    content = await file.read(settings.max_upload_bytes + 1)
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"El archivo supera {settings.max_upload_mb} MB")
+    if not content:
+        raise HTTPException(status_code=400, detail="El archivo está vacío")
+
+    try:
+        text = extract_text(content, file.content_type, file.filename or "")
+    except ValueError as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "filename": file.filename,
+        "mime_type": file.content_type,
+        "size_bytes": len(content),
+        "text": text,
+        "char_count": len(text),
+    }
 
 @router.get("/{document_id}")
 def get_document(document_id: str, membership=Depends(get_org_membership)):

@@ -139,6 +139,28 @@ export default function UploadPage() {
   };
 
   const extractTextFromFile = async (file: File): Promise<string> => {
+    // 1. Intentar extracción vía backend FastAPI (PDF real, DOCX, XLSX)
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${apiUrl}/api/v1/documents/extract-text`, {
+        method: "POST",
+        body: formData,
+        // Sin headers Authorization: el backend devuelve 401 si no hay sesión;
+        // el fallback a cliente cubre ese caso.
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text && data.text.trim().length > 0) {
+          return data.text;
+        }
+      }
+    } catch {
+      // Backend no disponible o sin auth: continuar con extracción en cliente
+    }
+
+    // 2. Fallback: extracción en el navegador (solo .txt legible, PDF básico)
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(e.target?.result as string || "");
@@ -156,12 +178,12 @@ export default function UploadPage() {
             if (c >= 32 && c < 127) text += String.fromCharCode(c);
             else if (c === 10 || c === 13) text += "\n";
           }
-          resolve(text || "No se pudo extraer texto del PDF (usa .txt para prueba real de RAG).");
+          resolve(text || "No se pudo extraer texto del PDF (usa .txt para prueba real de RAG, o configura el backend para extracción real).");
         };
       } else {
         reader.readAsArrayBuffer(file);
         reader.onload = (e) => {
-          resolve("Extracción de texto para este tipo de archivo requiere librerías de servidor. Sube un .txt para probar RAG real.");
+          resolve("Extracción de texto para este tipo de archivo requiere el backend. Configura NEXT_PUBLIC_API_URL y súbelo de nuevo.");
         };
       }
     });
