@@ -1,8 +1,9 @@
+@import url("../styles/variables.css");
+@import "../styles/animations.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url("../styles/variables.css");
 
 html {
   scroll-behavior: smooth;
@@ -54,5 +55,3 @@ a {
 a:hover {
   color: var(--color-primary-hover);
 }
-
-@import "../styles/animations.css";

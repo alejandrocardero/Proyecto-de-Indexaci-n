@@ -1,0 +1,21 @@
+{
+  "name": "MiPymes Indexación",
+  "short_name": "MiPymes",
+  "description": "Servicio profesional de indexación multimodal para MiPymes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafaf6",
+  "theme_color": "#b45309",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "32x32",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,5 +1,11 @@
 import { cn } from "@/lib/utils";
-import React from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useRef,
+  useState,
+} from "react";
 import { ReactNode } from "react";
 
 /**
@@ -7,10 +13,8 @@ import { ReactNode } from "react";
  *
  * All styles derived from design tokens (design-tokens.json / variables.css).
  * No hardcoded hex values, no !important, no arbitrary spacing.
- *
- * @param props - Toast properties
- * @returns JSX Toast element
  */
+
 interface ToastProps {
   variant?: "primary" | "success" | "destructive";
   title?: ReactNode;
@@ -19,11 +23,13 @@ interface ToastProps {
   duration?: number;
 }
 
-type ToastItem = ToastProps & { id: string };
+export type ToastOptions = Omit<ToastProps, "className">;
+
+type ToastItem = ToastOptions & { id: string };
 
 const toastContainerClasses = cn(
-  "fixed z-50 max-w-sm right-4 top-4",
-  "rounded-lg border border-border bg-surface shadow-lg p-4 shadow-xl",
+  "relative w-full max-w-sm",
+  "rounded-lg border border-border bg-surface shadow-xl p-4",
   "transition-all duration-200 ease-out",
 );
 
@@ -44,18 +50,26 @@ export const Toast = ({
   description,
   className,
   duration = 5000,
-}: ToastProps) => {
+  onDismiss,
+}: ToastProps & { onDismiss?: () => void }) => {
   const [isVisible, setIsVisible] = React.useState(true);
+  const dismissedRef = useRef(false);
 
-  // Auto-hide after duration
+  // Auto-hide after duration, then notify parent so it can be removed from the list
   React.useEffect(() => {
-    const timer = setTimeout(() => setIsVisible(false), duration);
+    const timer = setTimeout(() => {
+      setIsVisible(false);
+      if (!dismissedRef.current) {
+        dismissedRef.current = true;
+        onDismiss?.();
+      }
+    }, duration);
     return () => clearTimeout(timer);
-  }, [duration, isVisible]);
+  }, [duration, onDismiss]);
 
   return (
     <div
-      className={cn(toastContainerClasses, className, isVisible ? "opacity-100" : "opacity-0")}
+      className={cn(toastContainerClasses, className, isVisible ? "opacity-100" : "opacity-0 pointer-events-none")}
       role="alert"
       aria-live="polite"
     >
@@ -80,27 +94,24 @@ export const Toast = ({
         </div>
 
         <div className="flex-1 pt-0.5">
-          {title && (
-            <p className="font-medium text-text-primary">{title}</p>
-          )}
+          {title && <p className="font-medium text-text-primary">{title}</p>}
           {description && (
-            <p className="text-text-secondary text-sm line-clamp-2">
-              {description}
-            </p>
+            <p className="text-text-secondary text-sm line-clamp-2">{description}</p>
           )}
         </div>
       </div>
 
       <button
-        onClick={() => setIsVisible(false)}
+        onClick={() => {
+          if (!dismissedRef.current) {
+            dismissedRef.current = true;
+            onDismiss?.();
+          }
+        }}
         className={toastCloseButtonClasses}
         aria-label="Cerrar notificación"
       >
-        <svg
-          className="w-3 h-3 text-text-muted"
-          viewBox="0 0 24 24"
-          fill="currentColor"
-        >
+        <svg className="w-3 h-3 text-text-muted" viewBox="0 0 24 24" fill="currentColor">
           <path d="M18 6L6 18M6 6l12 12" />
         </svg>
       </button>
@@ -108,21 +119,55 @@ export const Toast = ({
   );
 };
 
+interface ToastContextValue {
+  toast: (props: ToastOptions) => string;
+  dismiss: (id: string) => void;
+}
+
+const ToastContext = createContext<ToastContextValue | null>(null);
+
 /**
- * Toast wrapper that manages multiple toasts.
+ * Renders a stack of toasts in the top-right corner and exposes `toast()` / `dismiss()`.
+ * Must wrap any component that calls `useToast()`.
  */
-export const useToast = () => {
-  const [toasts, setToasts] = React.useState<ToastItem[]>([]);
+export function ToastViewportProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
 
-  const toast = (props: Omit<ToastProps, "className">) => {
-    const id = Math.random().toString(36).substr(2, 9);
-    setToasts(prev => [...prev, { ...props, id } as ToastItem]);
+  const dismiss = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const toast = useCallback((props: ToastOptions) => {
+    const id = Math.random().toString(36).slice(2, 11);
+    setToasts((prev) => [...prev, { ...props, id }]);
     return id;
-  };
+  }, []);
 
-  const dismiss = (id: string) => {
-    setToasts(prev => prev.filter(toast => toast.id !== id));
-  };
+  const value = React.useMemo<ToastContextValue>(() => ({ toast, dismiss }), [toast, dismiss]);
 
-  return { toast, dismiss };
+  return (
+    <ToastContext.Provider value={value}>
+      {children}
+      <div
+        className="fixed z-50 top-4 right-4 flex flex-col gap-2 items-end pointer-events-none"
+        aria-live="polite"
+      >
+        {toasts.map((t) => (
+          <div key={t.id} className="pointer-events-auto">
+            <Toast {...t} onDismiss={() => dismiss(t.id)} />
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+export const useToast = (): ToastContextValue => {
+  const ctx = useContext(ToastContext);
+  if (!ctx) {
+    // Fallback keeps components working even if mounted outside the provider
+    // (no-op toasts instead of a crash).
+    return { toast: () => "", dismiss: () => {} };
+  }
+  return ctx;
 };

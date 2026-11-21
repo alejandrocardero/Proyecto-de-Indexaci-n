@@ -1,19 +1,31 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+import { ScrollReveal } from "@/components/animations/ScrollReveal";
+import { rag } from "@/lib/rag";
+import { RAG_SYSTEM_PROMPT } from "@/lib/prompts";
 
 interface UploadedFile {
   id: string;
   name: string;
   type: string;
   size: string;
+  sizeBytes: number;
   uploadedAt: string;
   status: "indexing" | "indexed" | "error";
   progress: number;
+  review_status: "pending" | "approved" | "rejected";
+  aiModel: string;
+  country?: string;
+  docType?: string;
+  reference?: string;
+  folio?: string;
 }
 
 interface ChatMessage {
@@ -23,7 +35,14 @@ interface ChatMessage {
   createdAt: string;
 }
 
+const AI_MODELS = [
+  { id: "meta-llama/Llama-3.1-8B-Instruct", name: "Llama 3.1 8B (HF)", provider: "Hugging Face", free: true },
+  { id: "HuggingFaceH4/zephyr-7b-beta", name: "Zephyr 7B Beta (HF)", provider: "Hugging Face", free: true },
+  { id: "mistralai/Mistral-7B-Instruct-v0.3", name: "Mistral 7B v0.3 (HF)", provider: "Hugging Face", free: true },
+] as const;
+
 export default function UploadPage() {
+  const [selectedAiModel, setSelectedAiModel] = useState<string>(AI_MODELS[0].id);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
@@ -32,6 +51,26 @@ export default function UploadPage() {
   const [chatInput, setChatInput] = useState("");
   const [isChatting, setIsChatting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [fileCountry, setFileCountry] = useState<string>("CO");
+  const [fileDocType, setFileDocType] = useState<string>("legal");
+  const [fileReference, setFileReference] = useState<string>("");
+  const [fileFolio, setFileFolio] = useState<string>("");
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+
+  // Si llegamos con ?pick=1 (botón "Subir primer documento" del home),
+  // abrimos directamente el selector de archivos del sistema.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("pick") !== "1") return;
+
+    const timer = window.setTimeout(() => {
+      fileInputRef.current?.click();
+    }, 400);
+
+    // Limpia el parámetro para que un refresh no reabra el diálogo
+    window.history.replaceState({}, "", window.location.pathname);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return "0 Bytes";
@@ -59,59 +98,168 @@ export default function UploadPage() {
     }
   };
 
-  const handleFile = (file: File) => {
+  /* --------------------------------------------------------------- */
+  /*  Validaciones de campos de texto                                */
+  /* --------------------------------------------------------------- */
+
+  /** Solo letras (incluye tildes, ñ, espacios y guiones) */
+  const validarSoloLetras = (valor: string): boolean => {
+    if (!valor.trim()) return true; // campo opcional vacío es válido
+    return /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s\-]+$/.test(valor);
+  };
+
+  /** Solo números (permite espacios y guiones entre dígitos) */
+  const validarSoloNumeros = (valor: string): boolean => {
+    if (!valor.trim()) return true; // campo opcional vacío es válido
+    return /^[\d\s\-]+$/.test(valor);
+  };
+
+  /** Validar que el archivo NO sea una imagen */
+  const esArchivoImagen = (file: File): boolean => {
+    return file.type.startsWith("image/");
+  };
+
+  const limpiarErroresValidacion = () => {
+    setValidationErrors({});
+  };
+
+  const validarCamposMetadatos = (): boolean => {
+    const errores: Record<string, string> = {};
+
+    if (!validarSoloLetras(fileReference)) {
+      errores.reference = "La referencia solo puede contener letras (sin números).";
+    }
+
+    if (!validarSoloNumeros(fileFolio)) {
+      errores.folio = "El número de folio/expediente solo puede contener dígitos (sin letras).";
+    }
+
+    setValidationErrors(errores);
+    return Object.keys(errores).length === 0;
+  };
+
+  const extractTextFromFile = async (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target?.result as string || "");
+      reader.onerror = () => reject(new Error("No se pudo leer el archivo"));
+      if (file.type.startsWith("text/") || file.type.includes("json") || file.name.endsWith(".txt") || file.name.endsWith(".md") || file.name.endsWith(".csv")) {
+        reader.readAsText(file);
+      } else if (file.type === "application/pdf") {
+        reader.readAsArrayBuffer(file);
+        reader.onload = (e) => {
+          const buffer = e.target?.result as ArrayBuffer;
+          const bytes = new Uint8Array(buffer);
+          let text = "";
+          for (let i = 0; i < Math.min(bytes.length, 50000); i++) {
+            const c = bytes[i];
+            if (c >= 32 && c < 127) text += String.fromCharCode(c);
+            else if (c === 10 || c === 13) text += "\n";
+          }
+          resolve(text || "No se pudo extraer texto del PDF (usa .txt para prueba real de RAG).");
+        };
+      } else {
+        reader.readAsArrayBuffer(file);
+        reader.onload = (e) => {
+          resolve("Extracción de texto para este tipo de archivo requiere librerías de servidor. Sube un .txt para probar RAG real.");
+        };
+      }
+    });
+  };
+
+  const handleFile = async (file: File) => {
+    if (!process.env.NEXT_PUBLIC_HF_API_KEY) {
+      setUploadError("Falta NEXT_PUBLIC_HF_API_KEY en .env.local. Configúrala y reinicia el servidor.");
+      return;
+    }
+
+    // 1. Rechazar imágenes en la indexación
+    if (esArchivoImagen(file)) {
+      setUploadError("No se pueden indexar imágenes. Sube un archivo de texto, PDF, Word, Excel o CSV.");
+      return;
+    }
+
+    // 2. Validar campos de metadatos antes de indexar
+    limpiarErroresValidacion();
+    if (!validarCamposMetadatos()) {
+      setIsUploading(false);
+      return;
+    }
+
     setIsUploading(true);
     setUploadError(null);
 
-    // Simular subida + indexación
-    setTimeout(() => {
-      setIsUploading(false);
-      const newFile: UploadedFile = {
-        id: Math.random().toString(36).substring(2, 9),
-        name: file.name,
-        type: file.type || "application/octet-stream",
-        size: formatFileSize(file.size),
-        uploadedAt: new Date().toLocaleDateString("es-ES", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        status: "indexing",
-        progress: 0,
-      };
-      setUploadedFiles([newFile, ...uploadedFiles]);
+    const newFile: UploadedFile = {
+      id: Math.random().toString(36).substring(2, 9),
+      name: file.name,
+      type: file.type || "application/octet-stream",
+      size: formatFileSize(file.size),
+      sizeBytes: file.size,
+      uploadedAt: new Date().toLocaleDateString("es-ES", {
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit",
+      }),
+      status: "indexing",
+      progress: 0,
+      review_status: "pending",
+      aiModel: selectedAiModel,
+      country: fileCountry,
+      docType: fileDocType,
+      reference: fileReference.trim() || undefined,
+      folio: fileFolio.trim() || undefined,
+    };
 
-      // Simular progreso de indexación
-      let progress = 0;
-      const interval = setInterval(() => {
-        progress += 10;
-        setUploadedFiles(prev =>
-          prev.map(f =>
-            f.id === newFile.id ? { ...f, progress } : f
-          )
-        );
-        if (progress >= 100) {
-          clearInterval(interval);
-          setUploadedFiles(prev =>
-            prev.map(f =>
-              f.id === newFile.id ? { ...f, status: "indexed" } : f
-            )
-          );
-          setActiveFileId(newFile.id);
-          setChatMessages(prev => [
-            ...prev,
-            {
-              id: Math.random().toString(36).substring(2, 9),
-              role: "assistant",
-              content: `He indexado "${file.name}". Ya puedes hacerme preguntas sobre su contenido.`,
-              createdAt: new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
-            },
-          ]);
+    setUploadedFiles([newFile, ...uploadedFiles]);
+
+    try {
+      // 1. Extraer texto del archivo
+      const text = await extractTextFromFile(file);
+      setUploadedFiles((prev) =>
+        prev.map((f) => (f.id === newFile.id ? { ...f, progress: 40 } : f))
+      );
+
+      // 2. Indexar con limpieza, chunking semántico y embeddings HF
+      await rag.indexDocument(
+        newFile.id,
+        file.name,
+        file.type,
+        file.size,
+        text,
+        selectedAiModel,
+        {
+          country: fileCountry,
+          docType: fileDocType,
+          reference: fileReference.trim() || undefined,
+          folio: fileFolio.trim() || undefined,
         }
-      }, 300);
-    }, 1500);
+      );
+
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === newFile.id ? { ...f, progress: 100, status: "indexed" } : f
+        )
+      );
+      setActiveFileId(newFile.id);
+
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: Math.random().toString(36).substring(2, 9),
+          role: "assistant",
+          content: `He indexado "${file.name}" y estoy listo para responder preguntas sobre su contenido.`,
+          createdAt: new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+    } catch (err: any) {
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === newFile.id ? { ...f, status: "error", error: err.message } : f
+        )
+      );
+      setUploadError(err.message || "Error al indexar el documento.");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -120,14 +268,14 @@ export default function UploadPage() {
   };
 
   const handleRemove = (id: string) => {
-    setUploadedFiles(prev => {
-      const next = prev.filter(f => f.id !== id);
+    setUploadedFiles((prev) => {
+      const next = prev.filter((f) => f.id !== id);
       if (activeFileId === id) setActiveFileId(null);
       return next;
     });
   };
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
 
@@ -136,8 +284,6 @@ export default function UploadPage() {
       return;
     }
 
-    const file = uploadedFiles.find(f => f.id === activeFileId);
-
     const userMsg: ChatMessage = {
       id: Math.random().toString(36).substring(2, 9),
       role: "user",
@@ -145,41 +291,67 @@ export default function UploadPage() {
       createdAt: new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
     };
 
-    setChatMessages(prev => [...prev, userMsg]);
+    setChatMessages((prev) => [...prev, userMsg]);
     setChatInput("");
     setIsChatting(true);
 
-    // Simular respuesta del RAG
-    setTimeout(() => {
-      const responses = [
-        `Basado en "${file?.name}", el documento contiene información relevante sobre tu consulta.`,
-        "Según el contenido indexado, aquí está lo que encontré relacionado con lo que preguntas.",
-        "El documento menciona varios puntos clave sobre este tema. ¿Te gustaría que profundice en alguno?",
-      ];
-      const response = responses[Math.floor(Math.random() * responses.length)];
+    try {
+      const { chatWithSources } = await import("@/lib/rag");
 
-      setChatMessages(prev => [
+      const result = await chatWithSources(
+        chatInput,
+        activeFileId,
+        selectedAiModel,
+        {
+          systemPrompt: RAG_SYSTEM_PROMPT,
+          topK: 4,
+        }
+      );
+
+      // Construir respuesta con citas de fuentes
+      let contentWithSources = result.answer;
+      if (result.sources.length > 0) {
+        contentWithSources += "\n\n---\n**Fuentes consultadas:**\n";
+        result.sources.forEach((s, i) => {
+          contentWithSources += `\n[Fuente ${i + 1}] ${s.docName} (fragmento ${s.chunkIndex + 1}, score ${(s.score * 100).toFixed(0)}%)\n`;
+          contentWithSources += `>${s.text.slice(0, 200)}${s.text.length > 200 ? "…" : ""}\n`;
+        });
+      }
+
+      setChatMessages((prev) => [
         ...prev,
         {
           id: Math.random().toString(36).substring(2, 9),
           role: "assistant",
-          content: response,
+          content: contentWithSources,
           createdAt: new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
+    } catch (err: any) {
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          id: Math.random().toString(36).substring(2, 9),
+          role: "assistant",
+          content: `Error al consultar el modelo: ${err.message}`,
+          createdAt: new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
+        },
+      ]);
+    } finally {
       setIsChatting(false);
-    }, 1200);
+    }
   };
 
   const handleSendClick = () => {
     handleSend({ preventDefault: () => {} } as React.FormEvent);
   };
 
-  const activeFile = uploadedFiles.find(f => f.id === activeFileId);
+  const activeFile = uploadedFiles.find((f) => f.id === activeFileId);
 
   return (
     <main className="min-h-screen bg-background py-8 px-4 sm:px-6 lg:px-8 animate-in">
-      <div className="max-w-5xl mx-auto w-full space-y-8">
+      <ScrollReveal variant="fade" once>
+        <div className="max-w-5xl mx-auto w-full space-y-8">
         {/* Header */}
         <div className="text-center">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-primary/10 text-primary mb-4 mx-auto">
@@ -191,11 +363,110 @@ export default function UploadPage() {
             Subir documento
           </h2>
           <p className="text-text-secondary max-w-md mx-auto">
-            Sube un archivo y hazle preguntas sobre su contenido con IA.
+            Sube cualquier tipo de archivo y hazle preguntas sobre su contenido con IA.
           </p>
         </div>
 
-        {/* Zona de upload */}
+        {/* Selector de modelo de IA */}
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in fade-in">
+          <div>
+            <h3 className="font-semibold text-text-primary text-sm mb-2">Modelo de IA para indexación</h3>
+            <p className="text-text-muted text-xs">
+              Se usará para extraer texto, generar embeddings y responder preguntas.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <select
+              value={selectedAiModel}
+              onChange={(e) => setSelectedAiModel(e.target.value)}
+              className={cn(
+                "rounded-lg border border-border bg-surface px-3 py-2 text-sm font-medium",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2",
+                "bg-surface text-text-primary hover:bg-primary/5",
+                "min-w-[200px]"
+              )}
+            >
+              {AI_MODELS.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} ({model.provider})
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-text-muted">
+              {AI_MODELS.find((m) => m.id === selectedAiModel)?.name}
+            </span>
+          </div>
+        </div>
+
+        {/* Metadatos del documento */}
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in fade-in">
+          <div className="flex items-center gap-3 sm:min-w-[200px]">
+            <label className="text-sm font-medium text-text-primary w-20">País</label>
+            <select
+              value={fileCountry}
+              onChange={(e) => setFileCountry(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <option value="CO">Colombia</option>
+              <option value="CU">Cuba</option>
+              <option value="MX">México</option>
+              <option value="AR">Argentina</option>
+              <option value="CL">Chile</option>
+              <option value="PE">Perú</option>
+              <option value="EC">Ecuador</option>
+              <option value="OTRO">Otro</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-3 sm:min-w-[200px]">
+            <label className="text-sm font-medium text-text-primary w-20">Tipo</label>
+            <select
+              value={fileDocType}
+              onChange={(e) => setFileDocType(e.target.value)}
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            >
+              <option value="legal">Legal / Contratos</option>
+              <option value="fiscal">Facturas / Tributario</option>
+              <option value="laboral">Laboral</option>
+              <option value="civil">Civil</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Campos de texto con validación alfanumérica */}
+        <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 animate-in fade-in">
+          <div className="flex items-center gap-3 sm:min-w-[200px]">
+            <label className="text-sm font-medium text-text-primary w-20">Referencia</label>
+            <input
+              type="text"
+              value={fileReference}
+              onChange={(e) => setFileReference(e.target.value)}
+              placeholder="Solo letras"
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary flex-1"
+            />
+            {validationErrors.reference && (
+              <span className="text-xs text-destructive mt-1 block">{validationErrors.reference}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 sm:min-w-[200px]">
+            <label className="text-sm font-medium text-text-primary w-20">Folio / Expediente</label>
+            <input
+              type="text"
+              value={fileFolio}
+              onChange={(e) => setFileFolio(e.target.value)}
+              placeholder="Solo números"
+              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary flex-1"
+            />
+            {validationErrors.folio && (
+              <span className="text-xs text-destructive mt-1 block">{validationErrors.folio}</span>
+            )}
+          </div>
+          <p className="text-xs text-text-muted">
+            Referencia: solo letras. Folio: solo números.
+          </p>
+        </div>
+
+        {/* Zona de upload - acepta cualquier tipo de archivo */}
         <div
           className={cn(
             "border-2 border-border rounded-2xl bg-surface p-8 sm:p-12 text-center transition-colors duration-300",
@@ -203,9 +474,9 @@ export default function UploadPage() {
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
             isUploading && "border-primary/20 bg-primary/5",
           )}
-          onDragOver={e => e.preventDefault()}
-          onDragLeave={e => e.preventDefault()}
-          onDrop={e => {
+          onDragOver={(e) => e.preventDefault()}
+          onDragLeave={(e) => e.preventDefault()}
+          onDrop={(e) => {
             e.preventDefault();
             const file = e.dataTransfer?.files?.[0];
             if (file) handleFile(file);
@@ -215,7 +486,10 @@ export default function UploadPage() {
             <>
               <div className="mb-4 flex items-center justify-center gap-2">
                 <span className="spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full" />
-                <span className="text-text-primary text-sm font-medium">Subiendo archivo…</span>
+                <span className="text-text-primary text-sm font-medium">Subiendo e indexando archivo…</span>
+              </div>
+              <div className="w-full bg-border rounded-full h-2 mt-4">
+                <div className="bg-primary h-full rounded-full transition-all duration-300" style={{ width: "50%" }} />
               </div>
             </>
           ) : (
@@ -230,16 +504,17 @@ export default function UploadPage() {
                 </svg>
               </div>
               <h3 className="text-xl font-semibold text-text-primary mb-2">
-                Arrastra y suelta un archivo aquí
+                Arrastra y suelta cualquier archivo aquí
               </h3>
               <p className="text-text-secondary mb-6">
-                Formatos compatibles: PDF, DOCX, XLSX, TXT (máx. 50 MB)
+                Formatos compatibles: PDF, DOCX, XLSX, TXT, PNG, JPG, WEBP, CSV, JSON y más (máx. 100 MB)
               </p>
               <input
                 type="file"
                 className="hidden"
                 ref={fileInputRef}
                 onChange={handleFileChange}
+                accept="*/*"
               />
               <Button
                 variant="primary"
@@ -260,7 +535,7 @@ export default function UploadPage() {
           </div>
         )}
 
-        {/* Lista de archivos con estado de indexación */}
+        {/* Lista de archivos */}
         {uploadedFiles.length > 0 && (
           <section className="animate-in fade-in">
             <div className="flex items-center justify-between mb-6">
@@ -275,10 +550,24 @@ export default function UploadPage() {
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-secondary/5 border-b border-border">
-                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">Archivo</th>
-                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">Estado</th>
-                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">Tamaño</th>
-                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">Acciones</th>
+                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">
+                      Archivo
+                    </th>
+                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">
+                      Tipo
+                    </th>
+                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">
+                      Tamaño
+                    </th>
+                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">
+                      Modelo IA
+                    </th>
+                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">
+                      Estado
+                    </th>
+                    <th className="px-4 py-3 text-xs font-medium text-text-secondary uppercase tracking-wider">
+                      Acciones
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -298,12 +587,18 @@ export default function UploadPage() {
                           <span className="font-medium text-text-primary truncate">{file.name}</span>
                         </div>
                       </td>
+                      <td className="px-4 py-3 text-text-muted text-sm">
+                        {file.type.split("/").pop()?.toUpperCase() || "FILE"}
+                      </td>
+                      <td className="px-4 py-3 text-text-muted text-sm">{file.size}</td>
+                      <td className="px-4 py-3 text-text-muted text-sm">
+                        {AI_MODELS.find((m) => m.id === file.aiModel)?.name || file.aiModel}
+                      </td>
                       <td className="px-4 py-3">
                         <Badge variant={statusBadge(file.status)} className="text-xs">
                           {file.status === "indexing" ? `Indexando… ${file.progress}%` : statusLabel(file.status)}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-text-muted text-sm">{file.size}</td>
                       <td className="px-4 py-3">
                         <Button
                           variant={file.status === "indexed" ? "primary" : "outline"}
@@ -347,10 +642,9 @@ export default function UploadPage() {
               <p className="text-text-secondary text-sm mt-1">
                 {activeFile
                   ? activeFile.status === "indexed"
-                    ? "Haz preguntas sobre el contenido de este documento."
+                    ? `Usando modelo: ${AI_MODELS.find((m) => m.id === activeFile.aiModel)?.name}`
                     : `Indexando… ${activeFile.progress}%`
-                  : "Sube un documento para comenzar."
-                }
+                  : "Sube un documento para comenzar."}
               </p>
             </div>
             {activeFile && (
@@ -367,9 +661,7 @@ export default function UploadPage() {
             )}
           </div>
 
-          {/* Contenedor del chat - crece con los mensajes */}
           <div className="rounded-xl border border-border bg-surface shadow-sm overflow-hidden flex flex-col">
-            {/* Área de mensajes con scroll */}
             <div className="p-1 overflow-y-auto max-h-[200px] space-y-1 shrink-0">
               {activeFile && activeFile.status !== "indexed" && (
                 <div className="h-full flex items-center justify-center">
@@ -377,7 +669,9 @@ export default function UploadPage() {
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center mx-auto text-primary mb-1">
                       <span className="spin h-3 w-3 border-1 border-primary border-t-transparent rounded-full" />
                     </div>
-                    <p className="text-text-secondary text-[0.65rem]">Indexando documento… {activeFile.progress}%</p>
+                    <p className="text-text-secondary text-[0.65rem]">
+                      Indexando documento… {activeFile.progress}%
+                    </p>
                   </div>
                 </div>
               )}
@@ -429,7 +723,6 @@ export default function UploadPage() {
               )}
             </div>
 
-            {/* Barra de input fija abajo */}
             <div className="border-t border-border p-1 bg-surface flex items-center gap-1">
               <input
                 type="text"
@@ -437,11 +730,11 @@ export default function UploadPage() {
                   !activeFile
                     ? "Sube un documento para comenzar…"
                     : activeFile.status !== "indexed"
-                    ? "Espera a que termine la indexación…"
-                    : "Escribe tu pregunta…"
+                      ? "Espera a que termine la indexación…"
+                      : "Escribe tu pregunta…"
                 }
                 value={chatInput}
-                onChange={e => setChatInput(e.target.value)}
+                onChange={(e) => setChatInput(e.target.value)}
                 disabled={isChatting}
                 className="flex-1 text-sm py-1 rounded-xl bg-transparent border-none focus:ring-0 placeholder:text-text-muted"
               />
@@ -459,6 +752,7 @@ export default function UploadPage() {
           </div>
         </section>
       </div>
+      </ScrollReveal>
     </main>
   );
 }
