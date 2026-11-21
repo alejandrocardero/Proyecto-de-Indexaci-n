@@ -8,66 +8,73 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollReveal } from "@/components/animations/ScrollReveal";
 import {
   FileText,
-  Search,
-  ShieldCheck,
+  Scan,
+  Scissors,
   Brain,
-  Upload,
-  Mail,
+  Database,
+  Search,
+  Bot,
+  Quote,
   ArrowRight,
   CheckCircle2,
-  Zap,
-  FileCheck,
-  Monitor,
 } from "lucide-react";
 
 const steps = [
   {
     number: 1,
-    title: "Regístrate o inicia sesión",
+    title: "Ingesta de documentos",
     description:
-      "Crea tu cuenta gratuita para poder subir y organizar tus documentos de forma segura.",
-    icon: Mail,
-    badge: "Gratis",
+      "Se cargan PDF, Word, texto plano (TXT, MD, CSV) y HTML. Las imágenes no se indexan directamente.",
+    icon: FileText,
+    badge: "Entrada",
   },
   {
     number: 2,
-    title: "Elige tu modelo de IA",
+    title: "Limpieza de texto",
     description:
-      "Selecciona entre Gemini 2.5 Pro, Claude 3.5 Sonnet, GPT-4o, Llama 3.1 405B o Mistral Local para procesar tus archivos.",
-    icon: Brain,
-    badge: "Multimodal",
+      "Se eliminan encabezados, pies de página y números de página basura para que solo quede el contenido útil.",
+    icon: Scan,
+    badge: "Limpieza",
   },
   {
     number: 3,
-    title: "Sube cualquier archivo",
+    title: "Chunking semántico",
     description:
-      "Arrastra y suelta PDF, imágenes, Word, Excel, TXT, CSV, JSON y más. No hay restricciones de formato.",
-    icon: Upload,
-    badge: "Cualquier tipo",
+      "El documento se divide en fragmentos de 300–800 tokens con solapamiento de 50–100, respetando artículos, secciones y cláusulas.",
+    icon: Scissors,
+    badge: "Fragmentos",
   },
   {
     number: 4,
-    title: "Indexación automática",
+    title: "Embeddings con Hugging Face",
     description:
-      "La app extrae el texto con OCR y visión por computadora, genera embeddings y lo hace buscable en segundos.",
-    icon: Zap,
-    badge: "IA",
+      "Cada fragmento se convierte en un vector usando sentence-transformers/all-MiniLM-L6-v2 para búsqueda semántica.",
+    icon: Brain,
+    badge: "Vectores",
   },
   {
     number: 5,
-    title: "Haz preguntas sobre el contenido",
+    title: "Almacenamiento local",
     description:
-      "Chatea con tus documentos usando IA. Pregunta por fechas, cláusulas, montos o cualquier detalle del archivo.",
-    icon: FileCheck,
-    badge: "RAG",
+      "Los vectores y metadatos (país, tipo de documento, referencia, folio) se guardan en IndexedDB del navegador.",
+    icon: Database,
+    badge: "IndexedDB",
   },
   {
     number: 6,
-    title: "Organiza y encuentra todo",
+    title: "Consulta del usuario",
     description:
-      "Busca por nombre, contenido, fecha o tipo de documento. Controla quién ve qué con permisos y roles.",
-    icon: Monitor,
-    badge: "Seguro",
+      "Al hacer una pregunta, se genera su embedding y se buscan los 4 fragmentos más similares por similitud cosínea.",
+    icon: Search,
+    badge: "RAG",
+  },
+  {
+    number: 7,
+    title: "Respuesta con citas",
+    description:
+      "Un modelo de chat de Hugging Face responde usando SOLO el contexto de los fragmentos. Si no hay información, lo indica. Se citan las fuentes.",
+    icon: Bot,
+    badge: "IA",
   },
 ];
 
@@ -87,8 +94,8 @@ export default function GuidePage() {
             Cómo funciona MiPymes Indexación
           </h1>
           <p className="text-text-secondary text-lg max-w-2xl mx-auto leading-relaxed">
-            Organiza tus facturas, contratos y permisos con IA en seis pasos
-            sencillos, sin necesidad de departamento de sistemas.
+            Pipeline RAG completo: desde la ingesta del documento hasta la respuesta con citas de fuentes,
+            todo ejecutado con modelos gratuitos de Hugging Face.
           </p>
         </section>
       </ScrollReveal>
