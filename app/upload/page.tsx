@@ -182,7 +182,6 @@ export default function UploadPage() {
     // 2. Validar campos de metadatos antes de indexar
     limpiarErroresValidacion();
     if (!validarCamposMetadatos()) {
-      setIsUploading(false);
       return;
     }
 
@@ -211,12 +210,21 @@ export default function UploadPage() {
 
     setUploadedFiles([newFile, ...uploadedFiles]);
 
+    let currentProgress = 0;
+    const updateProgress = (p: number) => {
+      currentProgress = Math.min(100, Math.max(currentProgress, p));
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === newFile.id ? { ...f, progress: currentProgress } : f
+        )
+      );
+    };
+
     try {
       // 1. Extraer texto del archivo
+      updateProgress(10);
       const text = await extractTextFromFile(file);
-      setUploadedFiles((prev) =>
-        prev.map((f) => (f.id === newFile.id ? { ...f, progress: 40 } : f))
-      );
+      updateProgress(30);
 
       // 2. Indexar con limpieza, chunking semántico y embeddings HF
       await rag.indexDocument(
@@ -234,6 +242,7 @@ export default function UploadPage() {
         }
       );
 
+      updateProgress(100);
       setUploadedFiles((prev) =>
         prev.map((f) =>
           f.id === newFile.id ? { ...f, progress: 100, status: "indexed" } : f
