@@ -36,6 +36,7 @@ interface ChatMessage {
 }
 
 const AI_MODELS = [
+  { id: "extractivo-real-con-embeddings", name: "Extractivo real (ONNX)", provider: "Local · embeddings reales", free: true },
   { id: "meta-llama/Llama-3.1-8B-Instruct", name: "Llama 3.1 8B (HF)", provider: "Hugging Face", free: true },
   { id: "HuggingFaceH4/zephyr-7b-beta", name: "Zephyr 7B Beta (HF)", provider: "Hugging Face", free: true },
   { id: "mistralai/Mistral-7B-Instruct-v0.3", name: "Mistral 7B v0.3 (HF)", provider: "Hugging Face", free: true },

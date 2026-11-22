@@ -344,7 +344,7 @@ export async function chatWithSources(
     .map((r, i) => `[Fuente ${i + 1}] ${r.text}`)
     .join("\n\n");
 
-  const systemPrompt =
+  const rawSystemPrompt =
     options?.systemPrompt ??
     `Eres un asistente especializado. Responde ÚNICAMENTE basándote en los fragmentos del documento proporcionados.
 
@@ -355,10 +355,16 @@ REGLAS:
 4. Cita las fuentes usando [Fuente X] cuando refieras información específica.
 
 FRAGMENTOS:
-${context}
+{context}
 
 PREGUNTA:
-${query}`;
+{question}`;
+
+  // Los prompts personalizados (lib/prompts.ts) usan marcadores {context}/{question}.
+  // Sustituirlos aquí es obligatorio: sin esto el modelo no recibe el documento.
+  const systemPrompt = rawSystemPrompt
+    .replace(/\{context\}/g, context)
+    .replace(/\{question\}/g, query);
 
   // 3. Llamar al modelo de chat de Hugging Face
   const response: any = await hfClient.chat(chatModel, [

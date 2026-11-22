@@ -123,14 +123,18 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
     system = next((m["content"] for m in messages if m["role"] == "system"), "")
     query = next((m["content"] for m in messages if m["role"] == "user"), "")
 
-    # Quedarse únicamente con el texto de los fragmentos del documento.
-    # El system prompt de rag.ts tiene la forma:
-    #   "...REGLAS: ... FRAGMENTOS:\n[Fuente X] texto ...\n\nPREGUNTA:\n..."
-    if "FRAGMENTOS:" in system:
-        context = system.split("FRAGMENTOS:", 1)[1]
-    else:
-        context = system
-    context = re.sub(r"PREGUNTA:.*", "", context, flags=re.DOTALL)
+    # Quedarse únicamente con el texto del documento. Se soportan los dos
+    # formatos de prompt usados por el frontend:
+    #   - rag.ts:            "FRAGMENTOS:\n[Fuente X] texto ...\nPREGUNTA:\n..."
+    #   - lib/prompts.ts:    "CONTEXTO DEL DOCUMENTO:\n...\nPREGUNTA DEL USUARIO:\n..."
+    context = system
+    for marker in ("FRAGMENTOS:", "CONTEXTO DEL DOCUMENTO:", "CONTEXTO:"):
+        if marker in context:
+            context = context.split(marker, 1)[1]
+            break
+    context = re.split(
+        r"PREGUNTA(?: DEL USUARIO)?:|Respuesta:", context, maxsplit=1
+    )[0]
     context = re.sub(r"\[Fuente \d+\]", " ", context)
 
     sentences = [
@@ -138,6 +142,10 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
         for s in re.split(r"(?<=[.!?])\s+|\n+", context)
         if len(s.strip()) > 20
     ]
+    # Descartar encabezados sueltos cuando hay frases completas disponibles
+    complete = [s for s in sentences if s.rstrip()[-1:] in ".!?"]
+    if complete:
+        sentences = complete
     if not sentences:
         return "Esa información no se encuentra dentro del documento proporcionado."
 
@@ -174,7 +182,7 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
 
     source_match = re.search(r"\[Fuente \d+\]", system)
     citation = source_match.group(0) if source_match else "[Fuente 1]"
-    return "\n\n".join(f"{sentence} {citation}" for sentence in chosen)
+    return " ".join(chosen) + f" {citation}"
 
 
 def generate_chat(

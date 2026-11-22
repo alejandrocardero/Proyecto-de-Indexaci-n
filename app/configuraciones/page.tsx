@@ -160,7 +160,7 @@ export default function ConfiguracionesPage() {
               <p className="text-text-secondary">
                 Elige los modelos para indexación y chat. La inferencia se ejecuta realmente en el
                 backend (<code className="font-mono text-xs">sentence-transformers/all-MiniLM-L6-v2</code> para
-                embeddings y <code className="font-mono text-xs">Qwen/Qwen2.5-0.5B-Instruct</code> para chat),
+                embeddings y <code className="font-mono text-xs">extractivo-real-con-embeddings</code> para chat),
                 descargando los modelos desde huggingface.co. No se usan respuestas simuladas.
               </p>
             </div>
