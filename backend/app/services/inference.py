@@ -123,9 +123,15 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
     system = next((m["content"] for m in messages if m["role"] == "system"), "")
     query = next((m["content"] for m in messages if m["role"] == "user"), "")
 
-    context = re.sub(r"\[Fuente \d+\]", " ", system)
-    context = re.sub(r"REGLAS:.*?FRAGMENTOS:", "", context, flags=re.DOTALL)
+    # Quedarse únicamente con el texto de los fragmentos del documento.
+    # El system prompt de rag.ts tiene la forma:
+    #   "...REGLAS: ... FRAGMENTOS:\n[Fuente X] texto ...\n\nPREGUNTA:\n..."
+    if "FRAGMENTOS:" in system:
+        context = system.split("FRAGMENTOS:", 1)[1]
+    else:
+        context = system
     context = re.sub(r"PREGUNTA:.*", "", context, flags=re.DOTALL)
+    context = re.sub(r"\[Fuente \d+\]", " ", context)
 
     sentences = [
         s.strip()
@@ -145,14 +151,17 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
         return dot / (na * nb) if na and nb else 0.0
 
     scored = sorted(
-        zip(sentences, s_vecs),
-        key=lambda item: cosine(q_vec, item[1]),
+        [(s, v, cosine(q_vec, v)) for s, v in zip(sentences, s_vecs) if cosine(q_vec, v) >= 0.15],
+        key=lambda item: item[2],
         reverse=True,
     )
 
+    if not scored:
+        return "Esa información no se encuentra dentro del documento proporcionado."
+
     chosen: list[str] = []
     total = 0
-    for sentence, _ in scored[:5]:
+    for sentence, _, _score in scored[:5]:
         if total + len(sentence) > max_new_tokens * 4:
             break
         chosen.append(sentence)
@@ -194,9 +203,12 @@ def test_chat() -> dict[str, Any]:
         [
             {
                 "role": "system",
-                "content": "[Fuente 1] Hola. Esta es una prueba de conexión con el modelo.",
+                "content": "FRAGMENTOS:\n[Fuente 1] Esta es una prueba de conexión con el modelo de embeddings de Hugging Face. La inferencia se ejecuta localmente con ONNX Runtime.",
             },
-            {"role": "user", "content": "hola"},
+            {
+                "role": "user",
+                "content": "prueba de conexión con el modelo de embeddings",
+            },
         ],
         max_new_tokens=64,
     )

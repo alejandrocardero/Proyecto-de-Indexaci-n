@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 
 const DEFAULT_CHAT_MODELS = [
+  { id: "extractivo-real-con-embeddings", name: "Extractivo real con embeddings", provider: "Local · ONNX Runtime", free: true },
   { id: "meta-llama/Llama-3.1-8B-Instruct", name: "Llama 3.1 8B", provider: "Hugging Face", free: true },
   { id: "HuggingFaceH4/zephyr-7b-beta", name: "Zephyr 7B Beta", provider: "Hugging Face", free: true },
   { id: "mistralai/Mistral-7B-Instruct-v0.3", name: "Mistral 7B v0.3", provider: "Hugging Face", free: true },
@@ -113,7 +114,9 @@ export default function ConfiguracionesPage() {
         ...prev,
         [type]: {
           ok: true,
-          detail: data.detail || "Conectado correctamente",
+          detail: `${data.detail || "Conectado correctamente"}${
+            data.model ? ` · Modelo: ${data.model}` : ""
+          }`,
           icon: <CheckCircle2 className="w-4 h-4 text-success" />,
         },
       }));
@@ -176,7 +179,9 @@ export default function ConfiguracionesPage() {
                 <div>
                   <h3 className="font-semibold text-text-primary">Modelo de chat (responde preguntas)</h3>
                   <p className="text-text-muted text-sm">
-                    Se usa para responder preguntas sobre tus documentos indexados.
+                    Se usa para responder preguntas sobre tus documentos indexados. La inferencia se
+                    ejecuta localmente con <code className="font-mono text-xs">extractivo-real-con-embeddings</code>,
+                    que selecciona fragmentos reales del documento mediante similitud semántica.
                   </p>
                 </div>
                 <Badge variant={config.chatModel ? "secondary" : "primary"}>
@@ -215,7 +220,7 @@ export default function ConfiguracionesPage() {
                   <Input
                     value={customModel}
                     onChange={(value) => setCustomModel(value)}
-                    placeholder="meta-llama/Llama-3.1-8B-Instruct"
+                    placeholder="extractivo-real-con-embeddings"
                     className="mb-2"
                   />
                   <Button
