@@ -54,6 +54,13 @@ VALIDACION_FINAL.md
 # Next.js generated
 next-env.d.ts
 
+# Modelos ONNX descargados (se descargan con scripts/descargar_modelo.py)
+backend/models/
+
+# Python
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 Thumbs.db

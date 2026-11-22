@@ -155,8 +155,10 @@ export default function ConfiguracionesPage() {
                 Modelo de Inteligencia Artificial
               </h1>
               <p className="text-text-secondary">
-                Elige el modelo de Hugging Face para indexación y chat. Los modelos marcados como
-                <span className="text-success">Gratis</span> no tienen costo en la API de inferencia de HF.
+                Elige los modelos para indexación y chat. La inferencia se ejecuta realmente en el
+                backend (<code className="font-mono text-xs">sentence-transformers/all-MiniLM-L6-v2</code> para
+                embeddings y <code className="font-mono text-xs">Qwen/Qwen2.5-0.5B-Instruct</code> para chat),
+                descargando los modelos desde huggingface.co. No se usan respuestas simuladas.
               </p>
             </div>
             <Link
@@ -387,9 +389,9 @@ export default function ConfiguracionesPage() {
 
           <div className="mt-8 text-center">
             <p className="text-xs text-text-muted">
-              La configuración se guarda localmente en tu navegador. Para que los modelos funcionen
-              realmente, configura <code className="font-mono text-xs">NEXT_PUBLIC_HF_API_KEY</code> en tu
-              <code className="font-mono text-xs">.env.local</code> y reinicia el servidor.
+              La configuración se guarda localmente en tu navegador. Los modelos se ejecutan en el
+              backend Python con inferencia real; los resultados se generan con modelos descargados
+              desde huggingface.co, sin depender de créditos de la API remota.
             </p>
           </div>
         </section>

@@ -213,7 +213,7 @@ export const rag = {
     }
   ): Promise<SearchResult[]> {
     const topK = filters?.topK ?? 6;
-    const minScore = filters?.minScore ?? 0.25;
+    const minScore = filters?.minScore ?? 0.15; // Umbral para embeddings reales de sentence-transformers
 
     const { hfClient } = await import("./hf-client");
     const EMB_MODEL =
@@ -239,6 +239,12 @@ export const rag = {
     const allDocs = await this.getAllDocuments();
     for (const d of allDocs) docsMap.set(d.id, d);
 
+    // Normalizar query para matching por palabras clave
+    const queryWords = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2);
+
     // Calcular scores y aplicar filtros
     const scored: SearchResult[] = [];
     for (const chunk of allChunks) {
@@ -249,13 +255,23 @@ export const rag = {
       if (filters?.country && chunk.metadata.country !== filters.country) continue;
       if (filters?.docType && chunk.metadata.docType !== filters.docType) continue;
 
-      const score = cosineSimilarity(queryEmb, chunk.embedding);
-      if (score < minScore) continue;
+      // Score semántico (cosine similarity)
+      const semanticScore = cosineSimilarity(queryEmb, chunk.embedding);
+
+      // Score por palabras clave (fallback para embeddings locales débiles)
+      const chunkText = chunk.text.toLowerCase();
+      const keywordMatches = queryWords.filter((w) => chunkText.includes(w)).length;
+      const keywordScore = queryWords.length > 0 ? keywordMatches / queryWords.length : 0;
+
+      // Combinar scores: 85% semántico (embeddings reales) + 15% palabras clave
+      const combinedScore = semanticScore * 0.85 + keywordScore * 0.15;
+
+      if (combinedScore < minScore) continue;
 
       const doc = docsMap.get(chunk.docId);
       scored.push({
         text: chunk.text,
-        score,
+        score: combinedScore,
         docId: chunk.docId,
         docName: doc?.name || "Desconocido",
         chunkIndex: chunk.index,

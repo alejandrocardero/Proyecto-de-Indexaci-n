@@ -2,7 +2,11 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from app.core.config import settings
-from app.core.dependencies import get_org_membership, require_roles
+from app.core.dependencies import (
+    get_optional_org_membership,
+    get_org_membership,
+    require_roles,
+)
 from app.db.supabase import get_supabase
 from app.schemas import ReviewRequest
 from app.services.text_extraction import extract_text
@@ -82,7 +86,7 @@ async def upload_document(
 @router.post("/extract-text")
 async def extract_document_text(
     file: UploadFile = File(...),
-    membership=Depends(get_org_membership),
+    membership=Depends(get_optional_org_membership),
 ):
     """Extrae el texto de un documento subido sin guardarlo.
 

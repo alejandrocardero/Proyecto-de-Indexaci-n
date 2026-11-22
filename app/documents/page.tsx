@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 
 import { cn } from "@/lib/utils";
 import { useState, useCallback } from "react";
+import Link from "next/link";
 import { Table, TableHeader, TableCell, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -100,9 +101,11 @@ export default function DocumentsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <Button variant="primary" size="md" onClick={handleRefresh} className="px-6 py-3 text-base font-semibold shadow-sm hover:shadow-md min-w-[160px] text-center transition-all duration-300 transform hover:scale-[1.02]">
-                  Subir documento
-                </Button>
+                <Link href="/upload">
+                  <Button variant="primary" size="md" className="px-6 py-3 text-base font-semibold shadow-sm hover:shadow-md min-w-[160px] text-center transition-all duration-300 transform hover:scale-[1.02]">
+                    Subir documento
+                  </Button>
+                </Link>
                 <Button variant="outline" size="md" className="px-6 py-3 text-base font-medium border border-primary hover:border-primary hover:bg-primary/5 min-w-[160px] text-center transition-all duration-300 transform hover:scale-[1.02]">
                   Descargar lista
                 </Button>
@@ -179,7 +182,13 @@ export default function DocumentsPage() {
               <EmptyState
                 title="Todavía no hay documentos"
                 subtitle="Sube tu primera factura, contrato o permiso para empezar a organizarlo todo."
-                action="Subir documento"
+                action={
+                  <Link href="/upload">
+                    <button className="bg-primary text-surface hover:bg-primary-hover rounded-md px-4 py-2 text-sm font-medium transition-colors duration-200">
+                      Subir documento
+                    </button>
+                  </Link>
+                }
               />
             )}
           </div>

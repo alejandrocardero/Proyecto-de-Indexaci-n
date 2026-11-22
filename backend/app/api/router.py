@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.routes import health, auth, organizations, documents, audit, search, members
+from app.api.routes import health, auth, organizations, documents, audit, search, members, inference
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
@@ -9,3 +9,4 @@ api_router.include_router(documents.router, prefix="/documents", tags=["document
 api_router.include_router(audit.router, prefix="/audit", tags=["audit"])
 api_router.include_router(search.router, prefix="/search", tags=["search"])
 api_router.include_router(members.router, prefix="/organizations", tags=["members"])
+api_router.include_router(inference.router, prefix="/inference", tags=["inference"])

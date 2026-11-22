@@ -70,6 +70,8 @@ export default function UploadPage() {
   const [fileReference, setFileReference] = useState<string>("");
   const [fileFolio, setFileFolio] = useState<string>("");
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [extractionInfo, setExtractionInfo] = useState<string | null>(null);
 
   // Si llegamos con ?pick=1 (botón "Subir primer documento" del home),
   // abrimos directamente el selector de archivos del sistema.
@@ -204,12 +206,16 @@ export default function UploadPage() {
   };
 
   const handleFile = async (file: File) => {
-    if (!process.env.NEXT_PUBLIC_HF_API_KEY) {
-      setUploadError("Falta NEXT_PUBLIC_HF_API_KEY en .env.local. Configúrala y reinicia el servidor.");
+    // 1. Restricción: un solo documento a la vez para RAG correcto
+    const existingIndexed = uploadedFiles.find((f) => f.status === "indexed" || f.status === "indexing");
+    if (existingIndexed) {
+      setUploadError(
+        `Ya hay un documento indexado ("${existingIndexed.name}"). Elimínalo primero si quieres subir otro documento y realizar el RAG sobre uno solo.`
+      );
       return;
     }
 
-    // 1. Rechazar imágenes en la indexación
+    // 2. Rechazar imágenes en la indexación
     if (esArchivoImagen(file)) {
       setUploadError("No se pueden indexar imágenes. Sube un archivo de texto, PDF, Word, Excel o CSV.");
       return;
@@ -223,6 +229,8 @@ export default function UploadPage() {
 
     setIsUploading(true);
     setUploadError(null);
+    setUploadProgress(0);
+    setExtractionInfo(null);
 
     const newFile: UploadedFile = {
       id: Math.random().toString(36).substring(2, 9),
@@ -246,23 +254,30 @@ export default function UploadPage() {
 
     setUploadedFiles([newFile, ...uploadedFiles]);
 
-    let currentProgress = 0;
-    const updateProgress = (p: number) => {
-      currentProgress = Math.min(100, Math.max(currentProgress, p));
-      setUploadedFiles((prev) =>
-        prev.map((f) =>
-          f.id === newFile.id ? { ...f, progress: currentProgress } : f
-        )
-      );
-    };
-
     try {
       // 1. Extraer texto del archivo
-      updateProgress(10);
+      setUploadProgress(10);
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === newFile.id ? { ...f, progress: 10 } : f
+        )
+      );
       const text = await extractTextFromFile(file);
-      updateProgress(30);
+      if (!text || text.trim().length === 0) {
+        throw new Error("No se extrajo texto del documento. Prueba con un PDF o DOCX que contenga texto seleccionable.");
+      }
+      setExtractionInfo(
+        `${text.length.toLocaleString("es-ES")} caracteres extraídos de "${file.name}"`
+      );
+      setUploadProgress(30);
+      setUploadedFiles((prev) =>
+        prev.map((f) =>
+          f.id === newFile.id ? { ...f, progress: 30 } : f
+        )
+      );
 
-      // 2. Indexar con limpieza, chunking semántico y embeddings HF
+      // 2. Indexar con limpieza, chunking semántico y embeddings reales
+      setUploadProgress(60);
       await rag.indexDocument(
         newFile.id,
         file.name,
@@ -279,7 +294,7 @@ export default function UploadPage() {
         embeddingModel
       );
 
-      updateProgress(100);
+      setUploadProgress(100);
       setUploadedFiles((prev) =>
         prev.map((f) =>
           f.id === newFile.id ? { ...f, progress: 100, status: "indexed" } : f
@@ -305,6 +320,7 @@ export default function UploadPage() {
       setUploadError(err.message || "Error al indexar el documento.");
     } finally {
       setIsUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -535,8 +551,11 @@ export default function UploadPage() {
                 <span className="text-text-primary text-sm font-medium">Subiendo e indexando archivo…</span>
               </div>
               <div className="w-full bg-border rounded-full h-2 mt-4">
-                <div className="bg-primary h-full rounded-full transition-all duration-300" style={{ width: "50%" }} />
+                <div className="bg-primary h-full rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
               </div>
+              {extractionInfo && (
+                <p className="text-text-secondary text-xs mt-2">✓ {extractionInfo}</p>
+              )}
             </>
           ) : (
             <>
