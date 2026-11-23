@@ -9,8 +9,10 @@
  * modelos reales.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const INFERENCE_URL = `${API_URL}/api/v1/inference`;
+import { csrfHeaders } from "@/lib/csrf";
+
+// Tunnel same-origin (next.config.ts): evita CORS y mantiene las cookies de sesión.
+const INFERENCE_URL = "/api/backend/inference";
 
 export interface HFMessage {
   role: "system" | "user" | "assistant";
@@ -22,7 +24,8 @@ export const hfClient = {
   async embedding(model: string, text: string): Promise<number[]> {
     const res = await fetch(`${INFERENCE_URL}/embedding`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await csrfHeaders()) },
+      credentials: "include",
       body: JSON.stringify({ inputs: text, model }),
     });
 
@@ -40,7 +43,8 @@ export const hfClient = {
   async chat(model: string, messages: HFMessage[]) {
     const res = await fetch(`${INFERENCE_URL}/chat`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...(await csrfHeaders()) },
+      credentials: "include",
       body: JSON.stringify({ messages }),
     });
 

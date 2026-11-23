@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.main import app
+from app.core.csrf import CSRF_HEADER
 from app.services import auth_local
 
 
@@ -21,6 +22,13 @@ def _client():
 
 def _account(email="prueba@gmail.com", password="Clave1234"):
     return {"name": "Usuario Prueba", "email": email, "password": password}
+
+
+def _csrf(client):
+    """Obtiene el token CSRF igual que hace el frontend antes de mutar."""
+    res = client.get("/api/v1/auth/csrf")
+    assert res.status_code == 200
+    return {CSRF_HEADER: res.json()["token"]}
 
 
 def test_registro_crea_cuenta_y_sesion(db):
@@ -49,7 +57,7 @@ def test_acepta_proveedores_comunes(db):
 def test_registro_duplicado_falla(db):
     client = _client()
     assert client.post("/api/v1/auth/register", json=_account()).status_code == 200
-    response = client.post("/api/v1/auth/register", json=_account())
+    response = client.post("/api/v1/auth/register", json=_account(), headers=_csrf(client))
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "EMAIL_ALREADY_EXISTS"
 
@@ -69,6 +77,7 @@ def test_login_contrasena_incorrecta_falla(db):
     response = client.post(
         "/api/v1/auth/login",
         json={"email": "prueba@gmail.com", "password": "OtraClave123"},
+        headers=_csrf(client),
     )
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "WRONG_PASSWORD"
@@ -80,6 +89,7 @@ def test_login_exitoso_y_sesion_se_puede_cerrar(db):
     login = client.post(
         "/api/v1/auth/login",
         json={"email": "PRUEBA@GMAIL.COM", "password": "Clave1234"},
+        headers=_csrf(client),
     )
     assert login.status_code == 200
     token = login.json()["token"]

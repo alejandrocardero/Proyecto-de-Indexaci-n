@@ -24,6 +24,7 @@ from typing import Any
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "data" / "mipymes_auth.db"
 SESSION_TTL_SECONDS = 7 * 24 * 60 * 60  # 7 días
+RESET_TTL_SECONDS = 60 * 60  # 1 hora
 PBKDF2_ITERATIONS = 200_000
 
 # Proveedores de correo público aceptados. Se rechazan dominios corporativos o
@@ -112,6 +113,17 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS password_resets (
+                token TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
 
 
 def _connect() -> sqlite3.Connection:
@@ -163,6 +175,16 @@ def verify_password(password: str, stored: str) -> bool:
         return hmac.compare_digest(candidate.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
+
+
+def _initial_role(email: str) -> str:
+    """Rol asignado al registrar. ADMIN_EMAILS define los administradores."""
+    admins = {
+        item.strip().lower()
+        for item in os.getenv("ADMIN_EMAILS", "").split(",")
+        if item.strip()
+    }
+    return "admin" if email in admins else "viewer"
 
 
 def _public_user(row: sqlite3.Row) -> dict[str, Any]:
@@ -223,8 +245,15 @@ def register_user(name: str, email: str, password: str) -> dict[str, Any]:
             )
         conn.execute(
             "INSERT INTO users (id, email, name, password_hash, role, created_at) "
-            "VALUES (?, ?, ?, ?, 'viewer', ?)",
-            (user_id, clean_email, clean_name, hash_password(password), created_at),
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                user_id,
+                clean_email,
+                clean_name,
+                hash_password(password),
+                _initial_role(clean_email),
+                created_at,
+            ),
         )
         token = _create_session(conn, user_id)
         row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -272,3 +301,47 @@ def logout_session(token: str | None) -> None:
         return
     with _connect() as conn:
         conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+def create_password_reset(email: str) -> dict[str, Any]:
+    """Crea un token de reseteo con expiración de 1 hora.
+
+    En producción el token debe enviarse por correo; aquí se devuelve en la
+    respuesta para que el flujo sea comprobable sin un proveedor de email.
+    """
+    clean_email = normalize_email(email)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE email = ?", (clean_email,)
+        ).fetchone()
+        if row is None:
+            # No revelar si la cuenta existe.
+            return {"token": None, "expiresIn": RESET_TTL_SECONDS}
+        token = "rst_" + secrets.token_urlsafe(32)
+        now = int(time.time())
+        conn.execute(
+            "INSERT INTO password_resets (token, user_id, created_at, expires_at) "
+            "VALUES (?, ?, ?, ?)",
+            (token, row["id"], now, now + RESET_TTL_SECONDS),
+        )
+    return {"token": token, "expiresIn": RESET_TTL_SECONDS}
+
+
+def reset_password(token: str, new_password: str) -> dict[str, bool]:
+    """Cambia la contraseña si el token es válido, no usado y no expirado."""
+    _validate_password(new_password)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM password_resets WHERE token = ? AND used = 0 AND expires_at > ?",
+            (token, int(time.time())),
+        ).fetchone()
+        if row is None:
+            raise AuthError("INVALID_RESET_TOKEN", "El enlace de reseteo es inválido o expiró", 400)
+        conn.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (hash_password(new_password), row["user_id"]),
+        )
+        conn.execute("UPDATE password_resets SET used = 1 WHERE token = ?", (token,))
+        # Invalidar sesiones existentes tras un cambio de contraseña.
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["user_id"],))
+    return {"ok": True}

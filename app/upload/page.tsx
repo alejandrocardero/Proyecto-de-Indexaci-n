@@ -97,6 +97,40 @@ export default function UploadPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
+  // Restaurar documentos ya indexados desde IndexedDB al recargar/cambiar de
+  // pestaña. El documento nunca se pierde; antes la UI no lo volvía a cargar.
+  useEffect(() => {
+    let cancelled = false;
+    rag.getAllDocuments()
+      .then((docs) => {
+        if (cancelled) return;
+        const restored: UploadedFile[] = docs.map((doc) => ({
+          id: doc.id,
+          name: doc.name,
+          type: doc.type,
+          size: formatFileSize(doc.size),
+          sizeBytes: doc.size,
+          uploadedAt: new Date(doc.uploadedAt).toLocaleDateString("es-ES", {
+            day: "2-digit", month: "2-digit", year: "numeric",
+            hour: "2-digit", minute: "2-digit",
+          }),
+          status: doc.status === "indexed" ? "indexed" : doc.status === "error" ? "error" : "indexing",
+          progress: doc.status === "indexed" ? 100 : 0,
+          review_status: "approved",
+          aiModel: doc.aiModel,
+          country: doc.metadata?.country,
+          docType: doc.metadata?.docType,
+          reference: doc.metadata?.reference,
+          folio: doc.metadata?.folio,
+        }));
+        setUploadedFiles(restored);
+        const firstIndexed = restored.find((f) => f.status === "indexed");
+        if (firstIndexed) setActiveFileId(firstIndexed.id);
+      })
+      .catch((err) => console.error("[upload] no se pudieron restaurar documentos:", err));
+    return () => { cancelled = true; };
+  }, []);
+
   const statusBadge = (status: string) => {
     switch (status) {
       case "indexing": return "primary";

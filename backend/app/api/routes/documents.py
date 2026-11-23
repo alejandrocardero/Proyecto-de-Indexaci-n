@@ -8,15 +8,12 @@ from app.core.dependencies import (
     require_roles,
 )
 from app.db.supabase import get_supabase
+from app.core.security_log import log_security_event
 from app.schemas import ReviewRequest
+from app.services.file_validation import sanitize_filename, validate_upload
 from app.services.text_extraction import extract_text
 
 router = APIRouter()
-ALLOWED_TYPES = {
-    "application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/plain",
-    "image/png", "image/jpeg", "image/webp"
-}
 
 def _audit(db, org_id, user_id, action, entity_id=None, details=None):
     db.table("audit_logs").insert({
@@ -46,20 +43,26 @@ async def upload_document(
     title: str | None = Form(default=None),
     membership=Depends(require_roles("admin", "manager", "staff")),
 ):
-    content_type = file.content_type or "application/octet-stream"
-    if content_type not in ALLOWED_TYPES:
-        raise HTTPException(status_code=415, detail="Formato no admitido")
+    raw_name = file.filename or "archivo"
     content = await file.read(settings.max_upload_bytes + 1)
-    if len(content) > settings.max_upload_bytes:
-        raise HTTPException(status_code=413, detail=f"El archivo supera {settings.max_upload_mb} MB")
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo está vacío")
+    try:
+        content_type = validate_upload(
+            content, raw_name, file.content_type, settings.max_upload_bytes
+        )
+    except HTTPException as exc:
+        log_security_event(
+            "upload.rejected",
+            filename=sanitize_filename(raw_name)[:80],
+            declared_type=file.content_type,
+            reason=str(exc.detail),
+            org_id=membership["organization_id"],
+        )
+        raise
 
     db = get_supabase()
     org_id, user = membership["organization_id"], membership["user"]
     doc_id = str(uuid4())
-    raw_name = file.filename or "archivo"
-    safe_name = raw_name.replace("/", "_").replace("\\", "_").strip() or "archivo"
+    safe_name = sanitize_filename(raw_name)
     storage_path = f"{org_id}/{doc_id}/{safe_name}"
     try:
         db.storage.from_(settings.supabase_storage_bucket).upload(
@@ -93,21 +96,29 @@ async def extract_document_text(
     Útil para previsualizar el contenido antes de indexar.
     """
     content = await file.read(settings.max_upload_bytes + 1)
-    if len(content) > settings.max_upload_bytes:
-        raise HTTPException(status_code=413, detail=f"El archivo supera {settings.max_upload_mb} MB")
-    if not content:
-        raise HTTPException(status_code=400, detail="El archivo está vacío")
+    raw_name = file.filename or "archivo"
+    try:
+        real_mime = validate_upload(content, raw_name, file.content_type, settings.max_upload_bytes)
+    except HTTPException as exc:
+        log_security_event(
+            "upload.rejected",
+            filename=sanitize_filename(raw_name)[:80],
+            declared_type=file.content_type,
+            reason=str(exc.detail),
+            endpoint="extract-text",
+        )
+        raise
 
     try:
-        text = extract_text(content, file.content_type, file.filename or "")
+        text = extract_text(content, real_mime, raw_name)
     except ValueError as exc:
         raise HTTPException(status_code=415, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return {
-        "filename": file.filename,
-        "mime_type": file.content_type,
+        "filename": raw_name,
+        "mime_type": real_mime,
         "size_bytes": len(content),
         "text": text,
         "char_count": len(text),

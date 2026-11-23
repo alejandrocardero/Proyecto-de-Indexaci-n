@@ -7,13 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run",
+    "test": "vitest run --pool=threads",
     "backend": "cd backend && python -m uvicorn app.main:app --port 8000",
     "frontend": "next dev",
     "all": "start /B cmd /c \"cd backend && python -m uvicorn app.main:app --port 8000\" && next dev"
   },
   "dependencies": {
-    "@sentry/nextjs": "^11.15.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.119.2",
     "clsx": "^2.1.1",

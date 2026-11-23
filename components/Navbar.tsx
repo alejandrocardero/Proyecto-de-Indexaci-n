@@ -6,11 +6,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X, Sun, Moon, Settings } from "lucide-react";
 import { useAuth } from "@/lib/auth-local";
 import { Button } from "@/components/ui/button";
-import { LanguageSelector } from "@/components/layout/LanguageSelector";
+// import { LanguageSelector } from "@/components/layout/LanguageSelector"; // Temporalmente desactivado
 import { ProtectedButton } from "@/components/auth/ProtectedButton";
 
 export function Navbar() {
-  const { user, isAuthenticated, logout, currentLang, setLang } = useAuth();
+  const { user, isAuthenticated, logout } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const toggleMobileMenu = () => setIsMobileMenuOpen((prev) => !prev);
@@ -86,10 +86,11 @@ export function Navbar() {
                 </>
               )}
 
-              {/* Desktop language selector */}
+              {/* Selector de idioma desactivado temporalmente
               <div className="hidden md:flex">
                 <LanguageSelector currentLang={currentLang} onLangChange={setLang} />
               </div>
+              */}
 
               {/* Desktop settings button */}
               <div className="hidden md:flex">
@@ -221,7 +222,9 @@ export function Navbar() {
               </nav>
 
               <div className="p-6 border-t border-border">
+                {/* Selector de idioma desactivado temporalmente
                 <LanguageSelector currentLang={currentLang} onLangChange={setLang} className="w-full" />
+                */}
                 <div className="mt-4 flex items-center gap-2">
                   <span className="text-xs text-text-secondary">Tema:</span>
                   <button

@@ -114,12 +114,76 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     return normalized.astype(float).tolist()
 
 
-def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512) -> str:
-    """Respuesta extractiva REAL basada en similitud semántica de embeddings.
+NO_ANSWER = "Esa información no se encuentra dentro del documento proporcionado."
 
-    Selecciona oraciones reales del documento usando embeddings reales.
-    No es texto simulado ni pre-escrito.
+
+def _edit_distance(a: str, b: str, max_dist: int) -> int:
+    """Distancia de Levenshtein acotada (devuelve max_dist + 1 si la excede)."""
+    if abs(len(a) - len(b)) > max_dist:
+        return max_dist + 1
+    previous = list(range(len(b) + 1))
+    for i, char_a in enumerate(a, 1):
+        current = [i]
+        for j, char_b in enumerate(b, 1):
+            current.append(
+                min(
+                    previous[j] + 1,
+                    current[j - 1] + 1,
+                    previous[j - 1] + (char_a != char_b),
+                )
+            )
+        if min(current) > max_dist:
+            return max_dist + 1
+        previous = current
+    return previous[-1]
+
+
+def _expand_query(query: str, context: str) -> list[str]:
+    """Corrige typos leves contra el vocabulario real del documento.
+
+    'embending' -> 'embedding' cuando el documento habla de embeddings. Así una
+    pregunta mal escrita no degrada la búsqueda a una frase aleatoria.
     """
+    tokens = re.findall(r"[a-zá-éíóúñ0-9]+", query.lower())
+    vocabulary = {
+        word
+        for word in re.findall(r"[a-zá-éíóúñ0-9]+", context.lower())
+        if len(word) >= 3
+    }
+    expanded: list[str] = []
+    for token in tokens:
+        if len(token) < 3 or token in vocabulary:
+            expanded.append(token)
+            continue
+        max_dist = 1 if len(token) <= 6 else 2
+        best_word = None
+        best_distance = max_dist + 1
+        for word in vocabulary:
+            if abs(len(word) - len(token)) > max_dist:
+                continue
+            distance = _edit_distance(token, word, max_dist)
+            if distance < best_distance:
+                best_word, best_distance = word, distance
+        expanded.append(best_word if best_word and best_distance <= max_dist else token)
+    return expanded
+
+
+# Marcadores típicos de bibliografías y metadatos de páginas web. Estas líneas
+# pueden tener un embedding muy alto para la palabra consultada, pero no son una
+# respuesta: antes terminaban siendo elegidas como "fuente" del RAG.
+_REFERENCE_MARKERS = re.compile(
+    r"\[En línea\]|https?://|arXiv|et al\.|Documentation|Google Blog|MindStudio Blog|"
+    r"Developers Blog|\b(?:19|20)\d{2}\b",
+    re.IGNORECASE,
+)
+
+
+def _is_reference(sentence: str) -> bool:
+    return bool(_REFERENCE_MARKERS.search(sentence))
+
+
+def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512) -> str:
+    """Respuesta extractiva REAL con embeddings + anclaje léxico al documento."""
     system = next((m["content"] for m in messages if m["role"] == "system"), "")
     query = next((m["content"] for m in messages if m["role"] == "user"), "")
 
@@ -138,18 +202,21 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
     context = re.sub(r"\[Fuente \d+\]", " ", context)
 
     sentences = [
-        s.strip()
+        re.sub(r"\b[a-z][a-z.]*\+\d+\b", "", s.strip()).strip()
         for s in re.split(r"(?<=[.!?])\s+|\n+", context)
         if len(s.strip()) > 20
     ]
+    sentences = [s for s in sentences if s]
     # Descartar encabezados sueltos cuando hay frases completas disponibles
     complete = [s for s in sentences if s.rstrip()[-1:] in ".!?"]
     if complete:
         sentences = complete
     if not sentences:
-        return "Esa información no se encuentra dentro del documento proporcionado."
+        return NO_ANSWER
 
-    vectors = embed_texts([query] + sentences)
+    expanded = _expand_query(query, context)
+    search_query = " ".join(dict.fromkeys(expanded)) or query
+    vectors = embed_texts([search_query] + sentences)
     q_vec, s_vecs = vectors[0], vectors[1:]
 
     def cosine(a: list[float], b: list[float]) -> float:
@@ -158,18 +225,42 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
         nb = sum(y * y for y in b) ** 0.5
         return dot / (na * nb) if na and nb else 0.0
 
-    scored = sorted(
-        [(s, v, cosine(q_vec, v)) for s, v in zip(sentences, s_vecs) if cosine(q_vec, v) >= 0.15],
-        key=lambda item: item[2],
-        reverse=True,
-    )
+    scored: list[tuple[str, list[float], float, float]] = []
+    for sentence, vector in zip(sentences, s_vecs):
+        semantic = cosine(q_vec, vector)
+        words = set(re.findall(r"[a-zá-éíóúñ0-9]+", sentence.lower()))
+        hits = sum(
+            1
+            for token in expanded
+            if len(token) >= 3 and any(token in word for word in words)
+        )
+        lexical = hits / len(expanded) if expanded else 0.0
+        combined = semantic * 0.75 + lexical * 0.25
+        # Penalizar bibliografías: mencionan el término pero no responden.
+        if _is_reference(sentence):
+            combined *= 0.2
+        else:
+            # Preferir oraciones que definen o explican el término consultado.
+            if re.search(
+                r"\b(?:se refiere|es el primer|es un|consiste|permite|ofrece|"
+                r"proporciona|define|utiliza|unifica)\b",
+                sentence,
+                re.IGNORECASE,
+            ):
+                combined += 0.06
+        # Exigir anclaje léxico o similitud semántica clara: evita respuestas
+        # tomadas de fragmentos con score ~0.19 que no responden la pregunta.
+        if combined >= 0.25 and (lexical > 0 or semantic >= 0.32):
+            scored.append((sentence, vector, semantic, combined))
 
     if not scored:
-        return "Esa información no se encuentra dentro del documento proporcionado."
+        return NO_ANSWER
+
+    scored.sort(key=lambda item: (item[3], item[2]), reverse=True)
 
     chosen: list[str] = []
     total = 0
-    for sentence, _, _score in scored[:5]:
+    for sentence, _, _, _score in scored[:5]:
         if total + len(sentence) > max_new_tokens * 4:
             break
         chosen.append(sentence)
@@ -178,7 +269,7 @@ def _extractive_answer(messages: list[dict[str, str]], max_new_tokens: int = 512
             break
 
     if not chosen:
-        return "Esa información no se encuentra dentro del documento proporcionado."
+        return NO_ANSWER
 
     source_match = re.search(r"\[Fuente \d+\]", system)
     citation = source_match.group(0) if source_match else "[Fuente 1]"

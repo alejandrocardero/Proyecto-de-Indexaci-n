@@ -227,20 +227,13 @@ export default function TestModelsPage() {
             <h3 className="font-semibold text-text-primary mb-2">Instrucciones</h3>
             <ol className="text-left text-text-secondary text-sm max-w-xl mx-auto space-y-2 list-disc pl-5">
               <li>
-                Asegúrate de tener{" "}
-                <code className="font-mono text-xs">NEXT_PUBLIC_HF_API_KEY</code> en tu{" "}
-                <code className="font-mono text-xs">.env.local</code>
+                La inferencia se ejecuta en el backend con modelos ONNX locales.{" "}
+                <strong>No se envía ninguna clave de API al navegador.</strong>
               </li>
               <li>
-                Rota tu clave si la compartiste públicamente:{" "}
-                <a
-                  href="https://huggingface.co/settings/tokens"
-                  className="text-primary underline"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  huggingface.co/settings/tokens
-                </a>
+                Si algún día usas la API remota de Hugging Face, configura la clave{" "}
+                <code className="font-mono text-xs">HF_API_KEY</code> solo en el servidor, nunca con prefijo{" "}
+                <code className="font-mono text-xs">NEXT_PUBLIC_</code>.
               </li>
               <li>
                 Solo usa modelos que muestren <span className="text-green-600">OK</span> en el probador
@@ -248,11 +241,8 @@ export default function TestModelsPage() {
               <li>
                 Errores comunes:{" "}
                 <ul className="list-disc pl-4 mt-1 text-xs text-text-muted">
-                  <li><strong>401/403:</strong> Clave inválida o sin permisos</li>
-                  <li><strong>404:</strong> Modelo no existe en HF</li>
                   <li><strong>429:</strong> Límite de peticiones excedido</li>
-                  <li><strong>503:</strong> Modelo cargándose, reintenta</li>
-                  <li><strong>Sin internet:</strong> Error de red</li>
+                  <li><strong>503:</strong> Modelo cargándose o backend no disponible</li>
                 </ul>
               </li>
             </ol>

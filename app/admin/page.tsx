@@ -3,7 +3,9 @@
 export const dynamic = "force-dynamic";
 
 import { cn } from "@/lib/utils";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-local";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Table, TableHeader, TableCell, TableRow } from "@/components/ui/table";
@@ -34,6 +36,14 @@ const MOCK_DOCUMENTS: Document[] = [
 ];
 
 export default function AdminPage() {
+  const router = useRouter();
+  const { isAuthenticated, isLoading, user } = useAuth();
+  const canReview = user?.role === "admin" || user?.role === "manager";
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) router.replace("/auth/login");
+  }, [isLoading, isAuthenticated, router]);
+
   const [statusFilter, setStatusFilter] = useState<string | undefined>("pending");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
@@ -264,10 +274,10 @@ export default function AdminPage() {
                     </TableCell>
                     <TableCell className="text-text-muted text-xs">
                       <div className="flex items-center gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => handleApprove(doc.id)} className="py-1 px-3 text-xs shadow-sm hover:shadow-md transition-shadow hover:bg-primary/5">
+                        <Button variant="ghost" size="sm" onClick={() => handleApprove(doc.id)} disabled={!canReview} className="py-1 px-3 text-xs shadow-sm hover:shadow-md transition-shadow hover:bg-primary/5">
                           Aprobar
                         </Button>
-                        <Button variant="destructive" size="sm" onClick={() => handleReject(doc.id)} className="py-1 px-3 text-xs shadow-sm hover:shadow-md hover:bg-destructive/10">
+                        <Button variant="destructive" size="sm" onClick={() => handleReject(doc.id)} disabled={!canReview} className="py-1 px-3 text-xs shadow-sm hover:shadow-md hover:bg-destructive/10">
                           Rechazar
                         </Button>
                       </div>

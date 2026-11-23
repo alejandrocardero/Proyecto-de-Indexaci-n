@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
+from app.core.rate_limit import enforce_rate_limit
 from app.services.inference import (
     CHAT_MODEL,
     EMBEDDING_MODEL,
@@ -23,24 +24,27 @@ router = APIRouter()
 
 class EmbeddingRequest(BaseModel):
     inputs: str | list[str]
-    model: str | None = None
+    model: str | None = Field(default=None, max_length=200)
 
 
 class ChatRequest(BaseModel):
-    messages: list[dict[str, str]]
+    messages: list[dict[str, str]] = Field(max_length=40)
     parameters: dict[str, Any] | None = None
 
 
 class TestRequest(BaseModel):
-    type: str = "embedding"
+    type: str = Field(default="embedding", max_length=20)
 
 
 @router.post("/embedding")
-def embedding_endpoint(payload: EmbeddingRequest):
+def embedding_endpoint(payload: EmbeddingRequest, request: Request):
     """Genera embeddings reales con sentence-transformers."""
+    enforce_rate_limit(request, "embedding", limit=60, window_seconds=60)
     texts = [payload.inputs] if isinstance(payload.inputs, str) else payload.inputs
     if not texts or any(not t.strip() for t in texts):
         raise HTTPException(status_code=400, detail="inputs no puede estar vacío")
+    if len(texts) > 32:
+        raise HTTPException(status_code=400, detail="Máximo 32 textos por petición")
     try:
         vectors = embed_texts(texts)
     except Exception as exc:
@@ -56,8 +60,9 @@ def embedding_endpoint(payload: EmbeddingRequest):
 
 
 @router.post("/chat")
-def chat_endpoint(payload: ChatRequest):
+def chat_endpoint(payload: ChatRequest, request: Request):
     """Genera una respuesta real con el modelo de lenguaje local."""
+    enforce_rate_limit(request, "chat", limit=30, window_seconds=60)
     if not payload.messages:
         raise HTTPException(status_code=400, detail="messages no puede estar vacío")
     try:
@@ -78,8 +83,9 @@ def chat_endpoint(payload: ChatRequest):
 
 
 @router.post("/test")
-def test_endpoint(payload: TestRequest):
+def test_endpoint(payload: TestRequest, request: Request):
     """Prueba real de los modelos, usada por el botón 'Probar conexión'."""
+    enforce_rate_limit(request, "test", limit=20, window_seconds=60)
     try:
         if payload.type == "embedding":
             result = test_embedding()

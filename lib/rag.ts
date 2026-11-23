@@ -107,6 +107,25 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
+/** Distancia de Levenshtein acotada: corrige typos como "embending" -> "embedding". */
+function editDistance(a: string, b: string, maxDist: number): number {
+  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    if (Math.min(...current) > maxDist) return maxDist + 1;
+    previous = current;
+  }
+  return previous[b.length];
+}
+
 /* ------------------------------------------------------------------ */
 /*  RAG                                                               */
 /* ------------------------------------------------------------------ */
@@ -258,15 +277,24 @@ export const rag = {
       // Score semántico (cosine similarity)
       const semanticScore = cosineSimilarity(queryEmb, chunk.embedding);
 
-      // Score por palabras clave (fallback para embeddings locales débiles)
-      const chunkText = chunk.text.toLowerCase();
-      const keywordMatches = queryWords.filter((w) => chunkText.includes(w)).length;
+      // Score léxico con tolerancia a typos: "embending" debe encontrar "embedding".
+      const chunkWords = chunk.text.toLowerCase().match(/[a-zá-éíóúñ0-9]+/g) || [];
+      const keywordMatches = queryWords.filter((word) => {
+        const maxDist = word.length <= 6 ? 1 : 2;
+        return chunkWords.some(
+          (candidate) =>
+            candidate.includes(word) || editDistance(word, candidate, maxDist) <= maxDist
+        );
+      }).length;
       const keywordScore = queryWords.length > 0 ? keywordMatches / queryWords.length : 0;
 
       // Combinar scores: 85% semántico (embeddings reales) + 15% palabras clave
       const combinedScore = semanticScore * 0.85 + keywordScore * 0.15;
 
       if (combinedScore < minScore) continue;
+      // Sin evidencia léxica, exigir similitud semántica clara: evita fragmentos
+      // casi irrelevantes que antes pasaban con un score ~0.19.
+      if (keywordMatches === 0 && semanticScore < 0.3) continue;
 
       const doc = docsMap.get(chunk.docId);
       scored.push({

@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from "react";
+import { csrfHeaders, clearCsrf, ensureCsrf } from "@/lib/csrf";
 
 export interface User {
   id: string;
@@ -17,14 +18,17 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   register: (data: { name: string; email: string; password: string }) => Promise<void>;
   logout: () => void;
+  requestPasswordReset: (email: string) => Promise<{ token: string | null; expiresIn: number }>;
+  resetPassword: (token: string, password: string) => Promise<void>;
   currentLang: string;
   setLang: (lang: string) => void;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const AUTH_API = `${API_URL}/api/v1/auth`;
+// Tunnel same-origin definido en next.config.ts. La cookie de sesión es HttpOnly:
+// el navegador la envía automáticamente y el JS nunca ve el token.
+const AUTH_API = "/api/backend/auth";
 const USER_KEY = "mipymes_user";
-const TOKEN_KEY = "mipymes_auth_token";
+const TOKEN_KEY = "mipymes_auth_token"; // legado: se elimina al hidratar
 const LANG_KEY = "mipymes_lang";
 
 /** Proveedores de correo aceptados (debe coincidir con el backend). */
@@ -57,11 +61,20 @@ export class AuthApiError extends Error {
 }
 
 async function authFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || "GET").toUpperCase();
+  const needsCsrf = !["GET", "HEAD", "OPTIONS"].includes(method);
+  const csrf = needsCsrf ? await csrfHeaders() : {};
+
   let res: Response;
   try {
     res = await fetch(`${AUTH_API}${path}`, {
       ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...csrf,
+        ...(options.headers || {}),
+      },
     });
   } catch {
     throw new AuthApiError(
@@ -85,8 +98,6 @@ async function authFetch<T>(path: string, options: RequestInit = {}): Promise<T>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-let currentUser: User | null = null;
 
 /**
  * Valida la fortaleza de la contraseña.
@@ -116,14 +127,12 @@ export function validatePassword(password: string) {
   return { score, feedback, isValid };
 }
 
-function persistSession(token: string, user: User) {
-  currentUser = user;
-  localStorage.setItem(TOKEN_KEY, token);
+function persistUser(user: User) {
   localStorage.setItem(USER_KEY, JSON.stringify(user));
+  localStorage.removeItem(TOKEN_KEY); // el token vive solo en la cookie HttpOnly
 }
 
 function clearSession() {
-  currentUser = null;
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 }
@@ -139,25 +148,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return "es";
   });
 
-  // Hidratar la sesión validando el token contra la base de datos local.
+  // Hidratar la sesión validando la cookie contra la base de datos local.
   useEffect(() => {
     let mounted = true;
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (!token) {
-      clearSession();
-      if (mounted) setHydrated(true);
-      return () => {
-        mounted = false;
-      };
-    }
+    localStorage.removeItem(TOKEN_KEY);
 
-    authFetch<User>("/session", {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    authFetch<User>("/session")
       .then((validUser) => {
         if (!mounted) return;
-        currentUser = validUser;
-        localStorage.setItem(USER_KEY, JSON.stringify(validUser));
+        persistUser(validUser);
         setUser(validUser);
       })
       .catch(() => {
@@ -188,7 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      persistSession(data.token, data.user);
+      persistUser(data.user);
       setUser(data.user);
     } finally {
       setIsLoading(false);
@@ -203,7 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           method: "POST",
           body: JSON.stringify(data),
         });
-        persistSession(result.token, result.user);
+        persistUser(result.user);
         setUser(result.user);
       } finally {
         setIsLoading(false);
@@ -213,15 +212,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (token) {
-      authFetch("/logout", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => undefined);
-    }
+    authFetch("/logout", { method: "POST" }).catch(() => undefined);
+    clearCsrf();
     clearSession();
     setUser(null);
+  }, []);
+
+  const requestPasswordReset = useCallback(async (email: string) => {
+    return authFetch<{ token: string | null; expiresIn: number }>("/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+  }, []);
+
+  const resetPassword = useCallback(async (token: string, password: string) => {
+    await authFetch("/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    });
   }, []);
 
   const setLang = useCallback((lang: string) => {
@@ -234,7 +242,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, isAuthenticated: !!user, isLoading, login, register, logout, currentLang, setLang }}
+      value={{
+        user,
+        isAuthenticated: !!user,
+        isLoading,
+        login,
+        register,
+        logout,
+        requestPasswordReset,
+        resetPassword,
+        currentLang,
+        setLang,
+      }}
     >
       {children}
     </AuthContext.Provider>
