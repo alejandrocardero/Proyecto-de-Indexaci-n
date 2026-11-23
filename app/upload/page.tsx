@@ -7,9 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { ScrollReveal } from "@/components/animations/ScrollReveal";
 import { rag } from "@/lib/rag";
 import { RAG_SYSTEM_PROMPT } from "@/lib/prompts";
+import { useAuth } from "@/lib/auth-local";
 
 interface UploadedFile {
   id: string;
@@ -43,6 +45,8 @@ const AI_MODELS = [
 ] as const;
 
 export default function UploadPage() {
+  const { user } = useAuth();
+  const router = useRouter();
   const savedConfig = typeof window !== "undefined"
     ? (() => {
         try {
@@ -66,7 +70,6 @@ export default function UploadPage() {
   const [chatInput, setChatInput] = useState("");
   const [isChatting, setIsChatting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [fileCountry, setFileCountry] = useState<string>("CO");
   const [fileDocType, setFileDocType] = useState<string>("legal");
   const [fileReference, setFileReference] = useState<string>("");
   const [fileFolio, setFileFolio] = useState<string>("");
@@ -281,7 +284,7 @@ export default function UploadPage() {
       progress: 0,
       review_status: "pending",
       aiModel: selectedAiModel,
-      country: fileCountry,
+      country: user?.country || "CO",
       docType: fileDocType,
       reference: fileReference.trim() || undefined,
       folio: fileFolio.trim() || undefined,
@@ -321,7 +324,7 @@ export default function UploadPage() {
         text,
         selectedAiModel,
         {
-          country: fileCountry,
+          country: user?.country || "CO",
           docType: fileDocType,
           reference: fileReference.trim() || undefined,
           folio: fileFolio.trim() || undefined,
@@ -346,6 +349,9 @@ export default function UploadPage() {
           createdAt: new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
+
+      // Redirigir a la sección de documentos tras subir e indexar exitosamente
+      router.push("/documents");
     } catch (err: any) {
       setUploadedFiles((prev) =>
         prev.map((f) =>
@@ -498,21 +504,8 @@ export default function UploadPage() {
         {/* Metadatos del documento */}
         <div className="bg-surface border border-border rounded-xl p-4 sm:p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 animate-in fade-in">
           <div className="flex items-center gap-3 sm:min-w-[200px]">
-            <label className="text-sm font-medium text-text-primary w-20">País</label>
-            <select
-              value={fileCountry}
-              onChange={(e) => setFileCountry(e.target.value)}
-              className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            >
-              <option value="CO">Colombia</option>
-              <option value="CU">Cuba</option>
-              <option value="MX">México</option>
-              <option value="AR">Argentina</option>
-              <option value="CL">Chile</option>
-              <option value="PE">Perú</option>
-              <option value="EC">Ecuador</option>
-              <option value="OTRO">Otro</option>
-            </select>
+            <label className="text-sm font-medium text-text-primary w-20">País (predeterminado desde tu cuenta)</label>
+            <span className="text-sm text-text-muted">{user?.country || "CO"}</span>
           </div>
           <div className="flex items-center gap-3 sm:min-w-[200px]">
             <label className="text-sm font-medium text-text-primary w-20">Tipo</label>

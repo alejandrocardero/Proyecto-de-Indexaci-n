@@ -12,11 +12,24 @@ export interface RegisterFormProps {
   className?: string;
 }
 
+const PAISES = [
+  { value: "CO", label: "Colombia" },
+  { value: "CU", label: "Cuba" },
+  { value: "MX", label: "México" },
+  { value: "AR", label: "Argentina" },
+  { value: "CL", label: "Chile" },
+  { value: "PE", label: "Perú" },
+  { value: "EC", label: "Ecuador" },
+  { value: "OTRO", label: "Otro" },
+] as const;
+
 export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
   const { register, isLoading } = useAuth();
   const router = useRouter();
   const [name, setName] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [email, setEmail] = useState("");
+  const [country, setCountry] = useState<typeof PAISES[number]["value"]>("CO");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [acceptTerms, setAcceptTerms] = useState(false);
@@ -29,7 +42,7 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
     e.preventDefault();
     setError(null);
 
-    if (!name || !email || !password) {
+    if (!name || !companyName || !email || !password) {
       setError("Completa todos los campos");
       return;
     }
@@ -55,10 +68,9 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
     }
 
     try {
-      await register({ name, email, password });
+      await register({ name, email, password, country, companyName });
       onSuccess?.();
-      router.push("/");
-      router.refresh();
+      router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al crear la cuenta. Intenta de nuevo.");
     }
@@ -77,6 +89,15 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
         />
 
         <Input
+          type="text"
+          placeholder="MiPyme Ejemplo"
+          value={companyName}
+          onChange={(value) => setCompanyName(value)}
+          label="Nombre de tu MyPyme"
+          disabled={isLoading}
+        />
+
+        <Input
           type="email"
           placeholder="tuusuario@gmail.com"
           value={email}
@@ -84,6 +105,22 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
           label="Correo electrónico"
           disabled={isLoading}
         />
+
+        <div className="flex items-center gap-3 sm:min-w-[200px]">
+          <label className="text-sm font-medium text-text-primary w-20">País</label>
+          <select
+            value={country}
+            onChange={(e) => setCountry(e.target.value as typeof PAISES[number]["value"])}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            disabled={isLoading}
+          >
+            {PAISES.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
         <PasswordStrength
           value={password}

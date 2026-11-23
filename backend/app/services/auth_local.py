@@ -68,6 +68,11 @@ ALLOWED_EMAIL_DOMAINS = frozenset(
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@([^@\s]+\.[^@\s]+)$")
 
+# Países disponibles en la indexación de documentos. El país se elige al
+# registrar y queda fijo en la cuenta; el módulo de subida lo reutiliza.
+ALLOWED_COUNTRIES = frozenset({"CO", "CU", "MX", "AR", "CL", "PE", "EC", "OTRO"})
+DEFAULT_COUNTRY = "CO"
+
 
 class AuthError(Exception):
     """Error de autenticación con código legible para el frontend."""
@@ -99,10 +104,18 @@ def init_db() -> None:
                 name TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'viewer',
+                country TEXT NOT NULL DEFAULT 'CO',
+                company_name TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             )
             """
         )
+        # Migración para bases creadas antes de añadir país / nombre de MyPyme.
+        columnas = {fila[1] for fila in conn.execute("PRAGMA table_info(users)")}
+        if "country" not in columnas:
+            conn.execute("ALTER TABLE users ADD COLUMN country TEXT NOT NULL DEFAULT 'CO'")
+        if "company_name" not in columnas:
+            conn.execute("ALTER TABLE users ADD COLUMN company_name TEXT NOT NULL DEFAULT ''")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -193,6 +206,8 @@ def _public_user(row: sqlite3.Row) -> dict[str, Any]:
         "email": row["email"],
         "name": row["name"],
         "role": row["role"],
+        "country": row["country"],
+        "companyName": row["company_name"],
         "createdAt": row["created_at"],
     }
 
@@ -215,6 +230,20 @@ def _validate_name(name: str) -> str:
     return value
 
 
+def _validate_country(country: str) -> str:
+    value = (country or "").strip().upper()
+    if value not in ALLOWED_COUNTRIES:
+        raise AuthError("INVALID_COUNTRY", "Selecciona un país válido", 400)
+    return value
+
+
+def _validate_company_name(company: str) -> str:
+    value = " ".join((company or "").split())
+    if len(value) < 2 or len(value) > 100:
+        raise AuthError("INVALID_COMPANY", "El nombre de la MyPyme debe tener entre 2 y 100 caracteres", 400)
+    return value
+
+
 def _create_session(conn: sqlite3.Connection, user_id: str) -> str:
     token = "sess_" + secrets.token_urlsafe(32)
     now = int(time.time())
@@ -225,10 +254,18 @@ def _create_session(conn: sqlite3.Connection, user_id: str) -> str:
     return token
 
 
-def register_user(name: str, email: str, password: str) -> dict[str, Any]:
-    """Crea una cuenta. Falla si el correo ya existe o el dominio no está permitido."""
+def register_user(
+    name: str,
+    email: str,
+    password: str,
+    country: str = DEFAULT_COUNTRY,
+    company_name: str = "MiPyme",
+) -> dict[str, Any]:
+    """Crea una cuenta con país y MyPyme. Falla si el correo ya existe."""
     clean_email = normalize_email(email)
     clean_name = _validate_name(name)
+    clean_country = _validate_country(country)
+    clean_company = _validate_company_name(company_name)
     _validate_password(password)
 
     user_id = "usr_" + secrets.token_hex(8)
@@ -244,14 +281,16 @@ def register_user(name: str, email: str, password: str) -> dict[str, Any]:
                 409,
             )
         conn.execute(
-            "INSERT INTO users (id, email, name, password_hash, role, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO users (id, email, name, password_hash, role, country, company_name, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 user_id,
                 clean_email,
                 clean_name,
                 hash_password(password),
                 _initial_role(clean_email),
+                clean_country,
+                clean_company,
                 created_at,
             ),
         )

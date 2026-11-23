@@ -30,6 +30,9 @@ class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=8, max_length=128)
+    # Valores por defecto para clientes antiguos; el formulario siempre los envía.
+    country: str = Field(default="CO", max_length=10)
+    companyName: str = Field(default="MiPyme", max_length=100)
 
 
 class LoginRequest(BaseModel):
@@ -87,7 +90,13 @@ def register(payload: RegisterRequest, request: Request, response: Response) -> 
     """Crea una cuenta en la base de datos local y devuelve una sesión."""
     enforce_rate_limit(request, "register", limit=5, window_seconds=60)
     try:
-        result = register_user(payload.name, payload.email, payload.password)
+        result = register_user(
+            payload.name,
+            payload.email,
+            payload.password,
+            country=payload.country,
+            company_name=payload.companyName,
+        )
     except AuthError as exc:
         log_security_event(
             "auth.register_failed", code=exc.code, ip=client_ip(request),

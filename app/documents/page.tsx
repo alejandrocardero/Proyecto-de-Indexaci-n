@@ -3,7 +3,7 @@
 export const dynamic = "force-dynamic";
 
 import { cn } from "@/lib/utils";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { Table, TableHeader, TableCell, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,8 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { ScrollReveal } from "@/components/animations/ScrollReveal";
 import { Skeleton } from "@/components/ui/skeleton";
+import { rag } from "@/lib/rag";
+import type { IndexedDocument } from "@/lib/rag";
 
 interface Document {
   id: string;
@@ -22,18 +24,48 @@ interface Document {
   status: "pending" | "approved" | "rejected";
 }
 
-const MOCK_DOCUMENTS: Document[] = [
-  { id: "1", title: "Informe trimestral Q4 2023", type: "PDF", date: "2024-01-15", size: "2.4 MB", status: "approved" },
-  { id: "2", title: "Manual de usuario v2.1", type: "DOCX", date: "2024-01-10", size: "1.8 MB", status: "pending" },
-  { id: "3", title: "Presupuesto anual 2024", type: "XLSX", date: "2024-01-05", size: "850 KB", status: "pending" },
-  { id: "4", title: "Política de seguridad", type: "PDF", date: "2024-01-01", size: "3.1 MB", status: "approved" },
-  { id: "5", title: "Manual de cumplimiento", type: "PDF", date: "2023-12-20", size: "2.9 MB", status: "rejected" },
-];
+const formatFileSize = (bytes: number) => {
+  if (bytes === 0) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+};
+
+const mapStatus = (status: IndexedDocument["status"]): Document["status"] => {
+  switch (status) {
+    case "indexed": return "approved";
+    case "indexing": return "pending";
+    case "error": return "rejected";
+  }
+};
 
 export default function DocumentsPage() {
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
-  const [documents] = useState<Document[]>(MOCK_DOCUMENTS);
-  const [loading, setLoading] = useState(false);
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    rag.getAllDocuments()
+      .then((docs) => {
+        if (cancelled) return;
+        setDocuments(docs.map((doc) => ({
+          id: doc.id,
+          title: doc.name,
+          type: doc.type,
+          date: doc.uploadedAt,
+          size: formatFileSize(doc.size),
+          status: mapStatus(doc.status),
+        })));
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error("[documents] no se pudieron cargar documentos:", err);
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const filteredDocuments = documents.filter(
     (doc) => !statusFilter || doc.status === statusFilter
@@ -50,8 +82,19 @@ export default function DocumentsPage() {
 
   const handleRefresh = useCallback(async () => {
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setLoading(false);
+    await rag.getAllDocuments()
+      .then((docs) => {
+        setDocuments(docs.map((doc) => ({
+          id: doc.id,
+          title: doc.name,
+          type: doc.type,
+          date: doc.uploadedAt,
+          size: formatFileSize(doc.size),
+          status: mapStatus(doc.status),
+        })));
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, []);
 
   if (loading) {
@@ -106,8 +149,8 @@ export default function DocumentsPage() {
                     Subir documento
                   </Button>
                 </Link>
-                <Button variant="outline" size="md" className="px-6 py-3 text-base font-medium border border-primary hover:border-primary hover:bg-primary/5 min-w-[160px] text-center transition-all duration-300 transform hover:scale-[1.02]">
-                  Descargar lista
+                <Button variant="outline" size="md" onClick={handleRefresh} className="px-6 py-3 text-base font-medium border border-primary hover:border-primary hover:bg-primary/5 min-w-[160px] text-center transition-all duration-300 transform hover:scale-[1.02]">
+                  Actualizar
                 </Button>
               </div>
             </div>

@@ -8,6 +8,8 @@ export interface User {
   email: string;
   name: string;
   role: "admin" | "manager" | "staff" | "viewer";
+  country: string;
+  companyName: string;
   createdAt: string;
 }
 
@@ -16,7 +18,13 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (data: { name: string; email: string; password: string }) => Promise<void>;
+  register: (data: {
+    name: string;
+    email: string;
+    password: string;
+    country?: string;
+    companyName?: string;
+  }) => Promise<void>;
   logout: () => void;
   requestPasswordReset: (email: string) => Promise<{ token: string | null; expiresIn: number }>;
   resetPassword: (token: string, password: string) => Promise<void>;
@@ -195,12 +203,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (data: { name: string; email: string; password: string }) => {
+    async (data: {
+      name: string;
+      email: string;
+      password: string;
+      country?: string;
+      companyName?: string;
+    }) => {
       setIsLoading(true);
       try {
         const result = await authFetch<{ token: string; user: User }>("/register", {
           method: "POST",
-          body: JSON.stringify(data),
+          body: JSON.stringify({
+            name: data.name,
+            email: data.email,
+            password: data.password,
+            country: data.country ?? "CO",
+            companyName: data.companyName ?? "MiPyme",
+          }),
         });
         persistUser(result.user);
         setUser(result.user);
