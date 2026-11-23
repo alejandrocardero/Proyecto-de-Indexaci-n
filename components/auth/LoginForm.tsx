@@ -30,8 +30,8 @@ export function LoginForm({ onSuccess, className }: LoginFormProps) {
       onSuccess?.();
       router.push("/");
       router.refresh();
-    } catch {
-      setError("Error al iniciar sesión. Intenta de nuevo.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al iniciar sesión. Intenta de nuevo.");
     }
   };
 
@@ -40,7 +40,7 @@ export function LoginForm({ onSuccess, className }: LoginFormProps) {
       <form className="space-y-4" onSubmit={handleSubmit}>
         <Input
           type="email"
-          placeholder="correo@ejemplo.com"
+          placeholder="tuusuario@gmail.com"
           value={email}
           onChange={(value) => setEmail(value)}
           label="Correo electrónico"

@@ -21,6 +21,69 @@ interface AuthContextType {
   setLang: (lang: string) => void;
 }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const AUTH_API = `${API_URL}/api/v1/auth`;
+const USER_KEY = "mipymes_user";
+const TOKEN_KEY = "mipymes_auth_token";
+const LANG_KEY = "mipymes_lang";
+
+/** Proveedores de correo aceptados (debe coincidir con el backend). */
+export const ALLOWED_EMAIL_DOMAINS = [
+  "gmail.com", "googlemail.com",
+  "yahoo.com", "yahoo.es", "yahoo.co.uk", "yahoo.com.mx", "yahoo.com.ar", "yahoo.com.br", "yahoo.fr", "yahoo.de", "yahoo.ca",
+  "hotmail.com", "hotmail.es", "hotmail.co.uk",
+  "outlook.com", "outlook.es", "live.com", "live.com.mx", "msn.com",
+  "icloud.com", "me.com", "mac.com",
+  "aol.com", "proton.me", "protonmail.com", "protonmail.ch",
+  "mail.com", "gmx.com", "gmx.es", "zoho.com", "yandex.com", "yandex.ru",
+] as const;
+
+export function isAllowedEmailDomain(email: string): boolean {
+  const value = email.trim().toLowerCase();
+  const domain = value.split("@")[1];
+  return !!domain && (ALLOWED_EMAIL_DOMAINS as readonly string[]).includes(domain);
+}
+
+/** Error de la API de autenticación con código y mensaje del backend. */
+export class AuthApiError extends Error {
+  code?: string;
+  status: number;
+  constructor(message: string, code?: string, status = 400) {
+    super(message);
+    this.name = "AuthApiError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+async function authFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await fetch(`${AUTH_API}${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    });
+  } catch {
+    throw new AuthApiError(
+      "No se pudo conectar con el servidor de autenticación. Verifica que el backend esté activo.",
+      "NETWORK_ERROR",
+      0
+    );
+  }
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = data?.detail;
+    const message =
+      typeof detail === "string"
+        ? detail
+        : detail?.message || data?.message || "Error en la autenticación";
+    const code = typeof detail === "object" ? detail?.code : undefined;
+    throw new AuthApiError(message, code, res.status);
+  }
+  return data as T;
+}
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 let currentUser: User | null = null;
@@ -53,35 +116,66 @@ export function validatePassword(password: string) {
   return { score, feedback, isValid };
 }
 
+function persistSession(token: string, user: User) {
+  currentUser = user;
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+
+function clearSession() {
+  currentUser = null;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [currentLang, setCurrentLang] = useState(() => {
     if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("mipymes_lang");
-      return stored || "es";
+      return localStorage.getItem(LANG_KEY) || "es";
     }
     return "es";
   });
 
-  // Simular sesión persistente desde localStorage (solo en cliente)
+  // Hidratar la sesión validando el token contra la base de datos local.
   useEffect(() => {
-    const stored = localStorage.getItem("mipymes_user");
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        setUser(parsed);
-        currentUser = parsed;
-      } catch {
-        // ignorar
-      }
+    let mounted = true;
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      clearSession();
+      if (mounted) setHydrated(true);
+      return () => {
+        mounted = false;
+      };
     }
-    setHydrated(true);
+
+    authFetch<User>("/session", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((validUser) => {
+        if (!mounted) return;
+        currentUser = validUser;
+        localStorage.setItem(USER_KEY, JSON.stringify(validUser));
+        setUser(validUser);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        clearSession();
+        setUser(null);
+      })
+      .finally(() => {
+        if (mounted) setHydrated(true);
+      });
+
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   useEffect(() => {
-    localStorage.setItem("mipymes_lang", currentLang);
+    localStorage.setItem(LANG_KEY, currentLang);
     if (typeof document !== "undefined") {
       document.documentElement.lang = currentLang;
     }
@@ -89,42 +183,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true);
-    // Simular llamada a API
-    await new Promise((resolve) => setTimeout(resolve, 800));
-
-    const newUser: User = {
-      id: "usr_" + Math.random().toString(36).substring(2, 9),
-      email,
-      name: email.split("@")[0],
-      role: "admin",
-      createdAt: new Date().toISOString(),
-    };
-    currentUser = newUser;
-    localStorage.setItem("mipymes_user", JSON.stringify(newUser));
-    setUser(newUser);
-    setIsLoading(false);
+    try {
+      const data = await authFetch<{ token: string; user: User }>("/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      persistSession(data.token, data.user);
+      setUser(data.user);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  const register = useCallback(async (data: { name: string; email: string; password: string }) => {
-    setIsLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    const newUser: User = {
-      id: "usr_" + Math.random().toString(36).substring(2, 9),
-      email: data.email,
-      name: data.name,
-      role: "viewer",
-      createdAt: new Date().toISOString(),
-    };
-    currentUser = newUser;
-    localStorage.setItem("mipymes_user", JSON.stringify(newUser));
-    setUser(newUser);
-    setIsLoading(false);
-  }, []);
+  const register = useCallback(
+    async (data: { name: string; email: string; password: string }) => {
+      setIsLoading(true);
+      try {
+        const result = await authFetch<{ token: string; user: User }>("/register", {
+          method: "POST",
+          body: JSON.stringify(data),
+        });
+        persistSession(result.token, result.user);
+        setUser(result.user);
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    []
+  );
 
   const logout = useCallback(() => {
-    currentUser = null;
-    localStorage.removeItem("mipymes_user");
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) {
+      authFetch("/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined);
+    }
+    clearSession();
     setUser(null);
   }, []);
 
@@ -137,7 +233,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, isLoading, login, register, logout, currentLang, setLang }}>
+    <AuthContext.Provider
+      value={{ user, isAuthenticated: !!user, isLoading, login, register, logout, currentLang, setLang }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PasswordStrength } from "@/components/auth/PasswordStrength";
-import { useAuth } from "@/lib/auth-local";
+import { isAllowedEmailDomain, useAuth, validatePassword } from "@/lib/auth-local";
 import { useRouter } from "next/navigation";
 
 export interface RegisterFormProps {
@@ -23,7 +23,7 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [showPasswordStrength, setShowPasswordStrength] = useState(false);
 
-  const { isValid } = validatePasswordInline(password);
+  const { isValid } = validatePassword(password);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,7 +34,12 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
       return;
     }
 
-    if (!validatePasswordInline(password).isValid) {
+    if (!isAllowedEmailDomain(email)) {
+      setError("Usa un correo de un proveedor permitido: gmail, yahoo, hotmail, outlook, icloud, etc.");
+      return;
+    }
+
+    if (!validatePassword(password).isValid) {
       setError("La contraseña no es lo suficientemente segura");
       return;
     }
@@ -54,8 +59,8 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
       onSuccess?.();
       router.push("/");
       router.refresh();
-    } catch {
-      setError("Error al crear la cuenta. Intenta de nuevo.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al crear la cuenta. Intenta de nuevo.");
     }
   };
 
@@ -73,7 +78,7 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
 
         <Input
           type="email"
-          placeholder="correo@ejemplo.com"
+          placeholder="tuusuario@gmail.com"
           value={email}
           onChange={(value) => setEmail(value)}
           label="Correo electrónico"
@@ -128,15 +133,4 @@ export function RegisterForm({ onSuccess, className }: RegisterFormProps) {
       </form>
     </div>
   );
-}
-
-function validatePasswordInline(password: string) {
-  // Reutilizamos la lógica de validación simple
-  let score = 0;
-  if (password.length >= 8) score += 1;
-  if (/[a-z]/.test(password)) score += 1;
-  if (/[A-Z]/.test(password)) score += 1;
-  if (/\d/.test(password)) score += 1;
-  if (/[^a-zA-Z\d]/.test(password)) score += 1;
-  return { isValid: score >= 4, score };
 }

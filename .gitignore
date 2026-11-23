@@ -57,6 +57,9 @@ next-env.d.ts
 # Modelos ONNX descargados (se descargan con scripts/descargar_modelo.py)
 backend/models/
 
+# Base de datos local de autenticación (se crea automáticamente)
+backend/data/
+
 # Python
 __pycache__/
 *.pyc
