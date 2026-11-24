@@ -1,6 +1,11 @@
 """Pruebas de calidad de la respuesta RAG (sin texto simulado)."""
 
-from app.services.inference import NO_ANSWER, _expand_query, _extractive_answer
+from app.services.inference import NO_ANSWER, _expand_query, generate_chat
+
+
+def _extractive_answer(messages: list[dict[str, str]]) -> str:
+    """Wrapper para compatibilidad con pruebas existentes."""
+    return generate_chat(messages, max_new_tokens=512, temperature=0.3)
 
 CONTEXT = """FRAGMENTOS:
 [Fuente 1] Los embeddings de Google permiten representar texto en vectores para búsqueda semántica.

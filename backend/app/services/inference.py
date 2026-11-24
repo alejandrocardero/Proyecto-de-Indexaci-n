@@ -1,7 +1,8 @@
-"""Inferencia REAL de modelos locales (embeddings ONNX + LLM GGUF).
+"""Inferencia REAL 100% offline (embeddings ONNX + respuesta extractiva).
 
 - Embeddings: all-MiniLM-L6-v2 (ONNX Runtime, 22 MB, 384 dims) — 100% offline
-- Chat: Qwen2.5-Coder-14B-Q5_K_M (llama.cpp, 10.5 GB, 14B parámetros) — 100% offline
+- Chat: Respuesta extractiva con anclaje léxico, corrección de typos y penalización de bibliografías
+- Sin modelos GGUF, sin llama.cpp, sin problemas de memoria OOM
 """
 
 from __future__ import annotations
@@ -18,21 +19,15 @@ logger = logging.getLogger(__name__)
 # Embeddings (ONNX)
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models" / "all-MiniLM-L6-v2"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+CHAT_MODEL = "extractivo-real-con-embeddings"
 
-# Chat LLM (GGUF via llama.cpp) - Qwen2.5-7B-Instruct Q4_K_M (~4 GB)
-LLM_MODEL_PATH = Path(os.getenv("LLM_MODEL_PATH", "D:/Install/models/qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf"))
-CHAT_MODEL = "Qwen2.5-7B-Instruct-Q4_K_M"
-
-# Thread-safe singletons
 _embed_session: Any = None
 _embed_tokenizer: Any = None
-_llm: Any = None
 _embed_lock = threading.Lock()
-_llm_lock = threading.Lock()
 
 
 # ============================================================
-# EMBEDDINGS (ONNX Runtime) — se mantiene igual
+# EMBEDDINGS (ONNX Runtime)
 # ============================================================
 def _get_embedder():
     """Carga el modelo ONNX de embeddings una sola vez (thread-safe)."""
@@ -100,33 +95,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
 
 
 # ============================================================
-# CHAT LLM (llama.cpp / GGUF)
-# ============================================================
-def _get_llm():
-    """Carga el modelo GGUF con llama-cpp-python una sola vez (thread-safe)."""
-    global _llm
-    if _llm is None:
-        with _llm_lock:
-            if _llm is None:
-                if not LLM_MODEL_PATH.exists():
-                    raise RuntimeError(f"Modelo GGUF no encontrado: {LLM_MODEL_PATH}")
-                logger.info("Cargando modelo GGUF (llama.cpp): %s", LLM_MODEL_PATH)
-                from llama_cpp import Llama
-                # n_gpu_layers=-1 intenta usar GPU (Metal/CUDA/ROCm) si está disponible
-                # n_ctx=4096 para contexto suficiente en RAG
-                _llm = Llama(
-                    model_path=str(LLM_MODEL_PATH),
-                    n_ctx=4096,
-                    n_threads=os.cpu_count() or 8,
-                    n_gpu_layers=-1,  # usa GPU si hay; 0 = solo CPU
-                    verbose=False,
-                )
-                logger.info("Modelo GGUF cargado correctamente: %s", CHAT_MODEL)
-    return _llm
-
-
-# ============================================================
-# RAG: búsqueda extractiva + generación con LLM local
+# RAG: búsqueda extractiva (100% offline, sin LLM)
 # ============================================================
 NO_ANSWER = "Esa información no se encuentra dentro del documento proporcionado."
 
@@ -146,6 +115,9 @@ def _edit_distance(a: str, b: str, max_dist: int) -> int:
 
 
 def _expand_query(query: str, context: str) -> list[str]:
+    """Corrige typos leves contra el vocabulario real del documento.
+    'embending' -> 'embedding' cuando el documento habla de embeddings.
+    """
     tokens = re.findall(r"[a-zá-éíóúñ0-9]+", query.lower())
     vocabulary = {word for word in re.findall(r"[a-zá-éíóúñ0-9]+", context.lower()) if len(word) >= 3}
     expanded: list[str] = []
@@ -229,7 +201,9 @@ def generate_chat(
     max_new_tokens: int = 512,
     temperature: float = 0.3,
 ) -> str:
-    """Genera respuesta con LLM local (Qwen2.5-Coder-14B) usando RAG."""
+    """Genera respuesta extractiva REAL con embeddings + anclaje léxico al documento.
+    100% offline, sin LLM, sin problemas de memoria OOM.
+    """
     system = next((m["content"] for m in messages if m["role"] == "system"), "")
     query = next((m["content"] for m in messages if m["role"] == "user"), "")
 
@@ -247,111 +221,19 @@ def generate_chat(
     if not relevant_chunks:
         return NO_ANSWER
 
-    # Construir prompt para el LLM
-    context_str = "\n\n".join(f"[Fuente {i+1}] {c}" for i, c in enumerate(relevant_chunks))
-    prompt = f"""Eres un asistente especializado que responde ÚNICAMENTE basándote en los fragmentos del documento proporcionados.
-
-Contexto del documento:
-{context_str}
-
-Pregunta: {query}
-
-Instrucciones:
-1. Responde solo con información del contexto.
-2. Si la información NO está en el contexto, responde: "{NO_ANSWER}"
-3. Cita las fuentes como [Fuente X].
-4. Sé conciso y directo.
-
-Respuesta:"""
-
-    llm = _get_llm()
-    try:
-        output = llm(
-            prompt,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=0.95,
-            stop=["</s>", "Pregunta:", "Contexto:", "Instrucciones:"],
-        )
-        text = output["choices"][0]["text"].strip()
-        # Añadir cita si el LLM no la incluyó
-        if "[Fuente" not in text:
-            text += " [Fuente 1]"
-        return text
-    except Exception as e:
-        logger.exception("Error generando respuesta con LLM local")
-        # Fallback a respuesta extractiva si falla el LLM
-        return _extractive_answer_fallback(messages, max_new_tokens)
-
-
-def _extractive_answer_fallback(messages: list[dict[str, str]], max_new_tokens: int = 512) -> str:
-    """Respuesta extractiva de respaldo (método anterior) si falla el LLM."""
-    system = next((m["content"] for m in messages if m["role"] == "system"), "")
-    query = next((m["content"] for m in messages if m["role"] == "user"), "")
-    context = system
-    for marker in ("FRAGMENTOS:", "CONTEXTO DEL DOCUMENTO:", "CONTEXTO:"):
-        if marker in context:
-            context = context.split(marker, 1)[1]
-            break
-    context = re.split(r"PREGUNTA(?: DEL USUARIO)?:|Respuesta:", context, maxsplit=1)[0]
-    context = re.sub(r"\[Fuente \d+\]", " ", context)
-
-    sentences = [
-        re.sub(r"\b[a-z][a-z.]*\+\d+\b", "", s.strip()).strip()
-        for s in re.split(r"(?<=[.!?])\s+|\n+", context)
-        if len(s.strip()) > 20
-    ]
-    sentences = [s for s in sentences if s]
-    complete = [s for s in sentences if s.rstrip()[-1:] in ".!?"]
-    if complete:
-        sentences = complete
-    if not sentences:
-        return NO_ANSWER
-
-    expanded = _expand_query(query, context)
-    search_query = " ".join(dict.fromkeys(expanded)) or query
-    vectors = embed_texts([search_query] + sentences)
-    q_vec, s_vecs = vectors[0], vectors[1:]
-
-    def cosine(a: list[float], b: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(a, b))
-        na = sum(x * x for x in a) ** 0.5
-        nb = sum(y * y for y in b) ** 0.5
-        return dot / (na * nb) if na and nb else 0.0
-
-    scored: list[tuple[str, float, float]] = []
-    for sentence, vector in zip(sentences, s_vecs):
-        semantic = cosine(q_vec, vector)
-        words = set(re.findall(r"[a-zá-éíóúñ0-9]+", sentence.lower()))
-        hits = sum(1 for token in expanded if len(token) >= 3 and any(token in word for word in words))
-        lexical = hits / len(expanded) if expanded else 0.0
-        combined = semantic * 0.75 + lexical * 0.25
-        if _is_reference(sentence):
-            combined *= 0.2
-        else:
-            if re.search(r"\b(?:se refiere|es el primer|es un|consiste|permite|ofrece|proporciona|define|utiliza|unifica)\b", sentence, re.IGNORECASE):
-                combined += 0.06
-        if combined >= 0.25 and (lexical > 0 or semantic >= 0.32):
-            scored.append((sentence, semantic, combined))
-
-    if not scored:
-        return NO_ANSWER
-
-    scored.sort(key=lambda item: (item[2], item[1]), reverse=True)
+    # Construir respuesta concatenando los mejores chunks con citas
     chosen: list[str] = []
     total = 0
-    for sentence, _, _ in scored[:5]:
-        if total + len(sentence) > max_new_tokens * 4:
+    for i, chunk in enumerate(relevant_chunks[:3]):
+        if total + len(chunk) > max_new_tokens * 4:
             break
-        chosen.append(sentence)
-        total += len(sentence)
-        if len(chosen) >= 3:
-            break
+        chosen.append(f"[Fuente {i+1}] {chunk}")
+        total += len(chunk)
+
     if not chosen:
         return NO_ANSWER
-    source_match = re.search(r"\[Fuente \d+\]", system)
-    citation = source_match.group(0) if source_match else "[Fuente 1]"
-    return " ".join(chosen) + f" {citation}"
+
+    return " ".join(chosen)
 
 
 def test_embedding() -> dict[str, Any]:
@@ -367,7 +249,7 @@ def test_embedding() -> dict[str, Any]:
 def test_chat() -> dict[str, Any]:
     answer = generate_chat(
         [
-            {"role": "system", "content": "FRAGMENTOS:\n[Fuente 1] Esta es una prueba de conexión con el modelo de embeddings de Hugging Face. La inferencia se ejecuta localmente con ONNX Runtime y Qwen2.5-Coder-14B."},
+            {"role": "system", "content": "FRAGMENTOS:\n[Fuente 1] Esta es una prueba de conexión con el modelo de embeddings de Hugging Face. La inferencia se ejecuta localmente con ONNX Runtime."},
             {"role": "user", "content": "prueba de conexión con el modelo de embeddings"},
         ],
         max_new_tokens=64,
